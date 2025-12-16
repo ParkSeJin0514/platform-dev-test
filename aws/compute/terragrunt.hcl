@@ -89,5 +89,5 @@ inputs = {
   db_deletion_protection    = local.env.locals.db_deletion_protection
   db_skip_final_snapshot    = local.env.locals.db_skip_final_snapshot
 
-  ssh_public_key = file("${get_repo_root()}/keys/test.pub")
+  ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
 }
