@@ -126,3 +126,30 @@ variable "ssh_public_key" {
   description = "SSH public key for VMs"
   type        = string
 }
+
+# ============================================================================
+# Cloud SQL 설정
+# ============================================================================
+variable "database_name" {
+  description = "Database name"
+  type        = string
+  default     = "petclinic"
+}
+
+variable "database_user" {
+  description = "Database user"
+  type        = string
+  default     = "petclinic"
+}
+
+variable "database_password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+}
+
+variable "cloudsql_tier" {
+  description = "Cloud SQL machine tier"
+  type        = string
+  default     = "db-f1-micro"
+}

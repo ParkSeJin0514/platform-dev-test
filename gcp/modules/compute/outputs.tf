@@ -95,3 +95,26 @@ output "mgmt_ssh_command" {
   description = "SSH command to connect to Management server via Bastion"
   value       = module.vm.mgmt_ssh_command
 }
+
+# ============================================================================
+# Cloud SQL 정보
+# ============================================================================
+output "cloudsql_instance_name" {
+  description = "Cloud SQL instance name"
+  value       = module.cloudsql.instance_name
+}
+
+output "cloudsql_private_ip" {
+  description = "Cloud SQL private IP address"
+  value       = module.cloudsql.private_ip_address
+}
+
+output "cloudsql_connection_name" {
+  description = "Cloud SQL connection name"
+  value       = module.cloudsql.instance_connection_name
+}
+
+output "db_credentials_secret_id" {
+  description = "Secret Manager secret ID for DB credentials"
+  value       = module.cloudsql.db_credentials_secret_id
+}

@@ -1,7 +1,7 @@
 # ============================================================================
 # Compute Module - main.tf (GCP)
 # ============================================================================
-# GKE Autopilot + Workload Identity (DB 없음 - AWS RDS 사용)
+# GKE Autopilot + Workload Identity + Cloud SQL
 # ============================================================================
 
 # ============================================================================
@@ -96,4 +96,25 @@ module "vm" {
 data "google_service_account" "gke_cluster_sa" {
   account_id = "gke-cluster-sa"
   project    = var.project_id
+}
+
+# ============================================================================
+# Cloud SQL 모듈 호출
+# ============================================================================
+module "cloudsql" {
+  source = "../cloudsql"
+
+  project_id   = var.project_id
+  project_name = var.project_name
+  region       = var.region
+  network_id   = var.vpc_id
+
+  database_name     = var.database_name
+  database_user     = var.database_user
+  database_password = var.database_password
+
+  tier              = var.cloudsql_tier
+  deletion_protection = false
+
+  external_secrets_sa_email = module.gke.external_secrets_sa_email
 }

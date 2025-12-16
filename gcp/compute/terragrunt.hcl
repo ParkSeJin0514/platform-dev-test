@@ -71,4 +71,10 @@ inputs = {
   bastion_machine_type = local.env.locals.bastion_machine_type
   mgmt_machine_type    = local.env.locals.mgmt_machine_type
   ssh_public_key       = local.env.locals.ssh_public_key
+
+  # Cloud SQL 설정
+  database_name     = local.env.locals.database_name
+  database_user     = local.env.locals.database_user
+  database_password = get_env("TF_VAR_db_password", "petclinic123!")
+  cloudsql_tier     = local.env.locals.cloudsql_tier
 }
