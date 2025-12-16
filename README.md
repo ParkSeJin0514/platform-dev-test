@@ -196,6 +196,19 @@ ssh gcp-mgmt     # GCP Management
 
 ## 🔧 GCP 특이사항
 
+### Management VM 자동 설정
+GCP Management VM 생성 시 자동으로 설치/설정되는 항목:
+- **kubectl** + **gke-gcloud-auth-plugin**: GKE 클러스터 접근
+- **Docker**: 컨테이너 관리
+- **mysql-client**: Cloud SQL 접속
+- **GKE 자동 인증**: VM 생성 시 자동으로 `kubectl` 설정 완료
+
+```bash
+# Management VM 접속 후 바로 사용 가능
+ssh gcp-mgmt
+kubectl get pods -A
+```
+
 ### GKE Autopilot
 - 노드 관리 불필요 (완전 관리형)
 - Pod 단위 과금
