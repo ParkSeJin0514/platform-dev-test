@@ -56,6 +56,8 @@ resource "google_sql_database_instance" "mysql" {
 # ============================================================================
 # Private Service Connection (VPC Peering for Cloud SQL)
 # ============================================================================
+# 기존에 생성된 Private IP range가 있으면 import 필요
+# terraform import module.cloudsql.google_compute_global_address.private_ip_range petclinic-dr-sql-ip
 resource "google_compute_global_address" "private_ip_range" {
   name          = "${var.project_name}-sql-ip"
   project       = var.project_id
@@ -63,12 +65,19 @@ resource "google_compute_global_address" "private_ip_range" {
   address_type  = "INTERNAL"
   prefix_length = 16
   network       = var.network_id
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "google_service_networking_connection" "private_vpc_connection" {
   network                 = var.network_id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_range.name]
+
+  # 기존 연결이 있으면 업데이트
+  update_on_creation_fail = true
 
   lifecycle {
     ignore_changes = [reserved_peering_ranges]
