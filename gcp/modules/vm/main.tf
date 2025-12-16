@@ -46,8 +46,23 @@ resource "google_compute_instance" "bastion" {
 
   metadata_startup_script = <<-EOF
     #!/bin/bash
+    set -e
+
+    # Install prerequisites
     apt-get update
-    apt-get install -y kubectl google-cloud-sdk-gke-gcloud-auth-plugin
+    apt-get install -y apt-transport-https ca-certificates gnupg curl
+
+    # Add Google Cloud SDK repo
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+
+    # Add Kubernetes repo
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+
+    # Install packages
+    apt-get update
+    apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin
   EOF
 
   labels = {
@@ -99,8 +114,29 @@ resource "google_compute_instance" "mgmt" {
 
   metadata_startup_script = <<-EOF
     #!/bin/bash
+    set -e
+
+    # Install prerequisites
     apt-get update
-    apt-get install -y kubectl google-cloud-sdk-gke-gcloud-auth-plugin docker.io
+    apt-get install -y apt-transport-https ca-certificates gnupg curl
+
+    # Add Google Cloud SDK repo
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+
+    # Add Kubernetes repo
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+
+    # Add Docker repo
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+
+    # Install packages
+    apt-get update
+    apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin docker-ce docker-ce-cli containerd.io
+
+    # Add user to docker group
     usermod -aG docker ${var.ssh_user}
   EOF
 
