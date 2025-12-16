@@ -1,0 +1,197 @@
+# ============================================================================
+# Terraform Apply (Multi-Cloud: AWS / GCP)
+# ============================================================================
+# 수동 실행으로 클라우드와 레이어 선택하여 Apply
+# - cloud: aws / gcp
+# - layer: all / foundation / compute / bootstrap
+# ============================================================================
+
+name: Terraform Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: '클라우드 선택'
+        required: true
+        default: 'aws'
+        type: choice
+        options:
+          - aws
+          - gcp
+      layer:
+        description: '적용할 레이어 선택'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - foundation
+          - compute
+          - bootstrap
+
+env:
+  TF_VERSION: 1.9.0
+  TG_VERSION: 0.54.0
+
+  # AWS 설정
+  AWS_REGION: ap-northeast-2
+
+  # GCP 설정
+  GCP_PROJECT_ID: kdt2-final-project-t1
+  GCP_REGION: asia-northeast3
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/605820610222/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+
+# 동시에 하나만 실행 (클라우드별로 분리)
+concurrency:
+  group: terraform-apply-${{ github.event.inputs.cloud }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Terraform Apply (${{ github.event.inputs.cloud }}/${{ github.event.inputs.layer }})
+    runs-on: ubuntu-latest
+
+    # OIDC 토큰 발급 권한
+    permissions:
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ github.event.inputs.cloud }}
+
+    steps:
+      # ========================================
+      # 1. 체크아웃
+      # ========================================
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ========================================
+      # 2. AWS 인증 (AWS 선택 시)
+      # ========================================
+      - name: Configure AWS credentials
+        if: github.event.inputs.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ========================================
+      # 3. GCP 인증 (GCP 선택 시)
+      # ========================================
+      - name: Authenticate to Google Cloud
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # ========================================
+      # 4. Terraform 설치
+      # ========================================
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # ========================================
+      # 5. Terragrunt 설치
+      # ========================================
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TG_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      # ========================================
+      # 6. SSH Key 생성 (AWS 전용)
+      # ========================================
+      - name: Create SSH Key
+        if: github.event.inputs.cloud == 'aws'
+        run: |
+          mkdir -p keys
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > keys/test.pub
+
+      # ========================================
+      # 7. GKE 인증 (GCP Bootstrap 시)
+      # ========================================
+      - name: Get GKE credentials
+        if: github.event.inputs.cloud == 'gcp' && (github.event.inputs.layer == 'bootstrap' || github.event.inputs.layer == 'all')
+        run: |
+          # Compute가 완료된 경우에만 GKE 인증 시도
+          if gcloud container clusters describe petclinic-dr-gke --region ${{ env.GCP_REGION }} --project ${{ env.GCP_PROJECT_ID }} 2>/dev/null; then
+            gcloud container clusters get-credentials petclinic-dr-gke \
+              --region ${{ env.GCP_REGION }} \
+              --project ${{ env.GCP_PROJECT_ID }}
+          else
+            echo "GKE cluster not found, skipping credentials setup"
+          fi
+
+      # ========================================
+      # 8. Apply Foundation
+      # ========================================
+      - name: Apply Foundation
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'foundation'
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🏗️ Foundation Layer Apply 시작..."
+          cd foundation && terragrunt apply --terragrunt-non-interactive -auto-approve
+          echo "✅ Foundation Layer 완료"
+
+      # ========================================
+      # 9. Apply Compute
+      # ========================================
+      - name: Apply Compute
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'compute'
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🖥️ Compute Layer Apply 시작..."
+          cd compute && terragrunt apply --terragrunt-non-interactive -auto-approve
+          echo "✅ Compute Layer 완료"
+
+      # ========================================
+      # 10. GKE 인증 (Compute 완료 후 Bootstrap 전)
+      # ========================================
+      - name: Get GKE credentials after Compute
+        if: github.event.inputs.cloud == 'gcp' && github.event.inputs.layer == 'all'
+        run: |
+          echo "🔑 GKE 인증 설정..."
+          gcloud container clusters get-credentials petclinic-dr-gke \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ env.GCP_PROJECT_ID }}
+          echo "✅ GKE 인증 완료"
+
+      # ========================================
+      # 11. Apply Bootstrap
+      # ========================================
+      - name: Apply Bootstrap
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'bootstrap'
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🚀 Bootstrap Layer Apply 시작..."
+          cd bootstrap && terragrunt apply --terragrunt-non-interactive -auto-approve
+          echo "✅ Bootstrap Layer 완료"
+
+      # ========================================
+      # 12. 완료 메시지
+      # ========================================
+      - name: Apply Complete
+        run: |
+          echo "=============================================="
+          echo "🎉 Terraform Apply 완료!"
+          echo "=============================================="
+          echo "Cloud: ${{ github.event.inputs.cloud }}"
+          echo "Layer: ${{ github.event.inputs.layer }}"

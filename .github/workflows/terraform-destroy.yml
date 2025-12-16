@@ -1,0 +1,324 @@
+# ============================================================================
+# Terraform Destroy (Multi-Cloud: AWS / GCP)
+# ============================================================================
+# 수동 실행으로 클라우드와 레이어 선택하여 Destroy
+# - AWS: Karpenter 정리, ALB 정리, Terraform destroy
+# - GCP: GKE 정리, Terraform destroy
+# ============================================================================
+
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: '클라우드 선택'
+        required: true
+        default: 'aws'
+        type: choice
+        options:
+          - aws
+          - gcp
+      confirm:
+        description: '삭제 확인 (destroy 입력)'
+        required: true
+        default: ''
+      layer:
+        description: '삭제 레이어 선택'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - bootstrap
+          - compute
+          - foundation
+
+env:
+  TF_VERSION: '1.9.0'
+  TG_VERSION: '0.54.0'
+  TERRAGRUNT_IGNORE_DEPENDENCY_ERRORS: "true"
+
+  # AWS 설정
+  AWS_REGION: ap-northeast-2
+  AWS_PROJECT_NAME: "petclinic-kr"
+
+  # GCP 설정
+  GCP_PROJECT_ID: kdt2-final-project-t1
+  GCP_REGION: asia-northeast3
+  GCP_CLUSTER_NAME: petclinic-dr-gke
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/605820610222/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ============================================================================
+  # 확인 단계
+  # ============================================================================
+  confirm:
+    name: 'Confirm Destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        if: github.event.inputs.confirm != 'destroy'
+        run: |
+          echo "❌ 삭제를 진행하려면 'destroy'를 입력하세요."
+          exit 1
+
+      - name: Confirmed
+        run: |
+          echo "✅ 삭제가 확인되었습니다."
+          echo "Cloud: ${{ github.event.inputs.cloud }}"
+          echo "Layer: ${{ github.event.inputs.layer }}"
+
+  # ============================================================================
+  # AWS Pre-Cleanup (AWS 선택 시)
+  # ============================================================================
+  aws-pre-cleanup:
+    name: 'AWS Pre-Cleanup'
+    needs: confirm
+    if: github.event.inputs.cloud == 'aws'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[0]' --output text 2>/dev/null || echo "")
+          if [ -n "$CLUSTER_NAME" ] && [ "$CLUSTER_NAME" != "None" ]; then
+            aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+            echo "✅ EKS 클러스터 연결: $CLUSTER_NAME"
+          else
+            echo "⚠️ EKS 클러스터 없음"
+          fi
+
+      - name: Cleanup Karpenter
+        continue-on-error: true
+        run: |
+          echo "🧹 Karpenter 정리 시작..."
+
+          # Karpenter Controller 중지
+          kubectl scale deployment karpenter -n kube-system --replicas=0 2>/dev/null || true
+          kubectl delete pods -n kube-system -l app.kubernetes.io/name=karpenter --force --grace-period=0 2>/dev/null || true
+
+          # NodeClaim 정리
+          for nc in $(kubectl get nodeclaims -o name 2>/dev/null); do
+            kubectl patch $nc -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $nc --force --grace-period=0 2>/dev/null || true
+          done
+
+          # NodePool 정리
+          for np in $(kubectl get nodepools -o name 2>/dev/null); do
+            kubectl patch $np -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $np --force --grace-period=0 2>/dev/null || true
+          done
+
+          # EC2NodeClass 정리
+          for ec in $(kubectl get ec2nodeclasses -o name 2>/dev/null); do
+            kubectl patch $ec -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $ec --force --grace-period=0 2>/dev/null || true
+          done
+
+          echo "✅ Karpenter 정리 완료"
+
+      - name: Cleanup ArgoCD
+        continue-on-error: true
+        run: |
+          echo "🧹 ArgoCD 정리 시작..."
+
+          # Application Finalizer 제거
+          for app in $(kubectl get applications -n argocd -o name 2>/dev/null); do
+            kubectl patch $app -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $app -n argocd --force --grace-period=0 2>/dev/null || true
+          done
+
+          echo "✅ ArgoCD 정리 완료"
+
+      - name: Cleanup Ingress
+        continue-on-error: true
+        run: |
+          echo "🧹 Ingress 정리 시작..."
+
+          # Ingress Finalizer 제거
+          for ing in $(kubectl get ingress -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null); do
+            ns=$(echo $ing | cut -d'/' -f1)
+            name=$(echo $ing | cut -d'/' -f2)
+            kubectl patch ingress $name -n $ns -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete ingress $name -n $ns --force --grace-period=0 2>/dev/null || true
+          done
+
+          echo "✅ Ingress 정리 완료"
+
+  # ============================================================================
+  # GCP Pre-Cleanup (GCP 선택 시)
+  # ============================================================================
+  gcp-pre-cleanup:
+    name: 'GCP Pre-Cleanup'
+    needs: confirm
+    if: github.event.inputs.cloud == 'gcp'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl
+        continue-on-error: true
+        run: |
+          if gcloud container clusters describe ${{ env.GCP_CLUSTER_NAME }} --region ${{ env.GCP_REGION }} 2>/dev/null; then
+            gcloud container clusters get-credentials ${{ env.GCP_CLUSTER_NAME }} \
+              --region ${{ env.GCP_REGION }} \
+              --project ${{ env.GCP_PROJECT_ID }}
+            echo "✅ GKE 클러스터 연결: ${{ env.GCP_CLUSTER_NAME }}"
+          else
+            echo "⚠️ GKE 클러스터 없음"
+          fi
+
+      - name: Cleanup ArgoCD
+        continue-on-error: true
+        run: |
+          echo "🧹 ArgoCD 정리 시작..."
+
+          # Application Finalizer 제거
+          for app in $(kubectl get applications -n argocd -o name 2>/dev/null); do
+            kubectl patch $app -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $app -n argocd --force --grace-period=0 2>/dev/null || true
+          done
+
+          echo "✅ ArgoCD 정리 완료"
+
+      - name: Cleanup Ingress
+        continue-on-error: true
+        run: |
+          echo "🧹 Ingress 정리 시작..."
+
+          # Ingress Finalizer 제거
+          for ing in $(kubectl get ingress -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null); do
+            ns=$(echo $ing | cut -d'/' -f1)
+            name=$(echo $ing | cut -d'/' -f2)
+            kubectl patch ingress $name -n $ns -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete ingress $name -n $ns --force --grace-period=0 2>/dev/null || true
+          done
+
+          echo "✅ Ingress 정리 완료"
+
+  # ============================================================================
+  # Terraform Destroy
+  # ============================================================================
+  destroy:
+    name: 'Terraform Destroy'
+    needs: [confirm, aws-pre-cleanup, gcp-pre-cleanup]
+    if: always() && needs.confirm.result == 'success'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ${{ github.event.inputs.cloud }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # AWS 인증
+      - name: Configure AWS credentials
+        if: github.event.inputs.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # GCP 인증
+      - name: Authenticate to Google Cloud
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TG_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      # SSH Key (AWS 전용)
+      - name: Create SSH Key
+        if: github.event.inputs.cloud == 'aws'
+        run: |
+          mkdir -p keys
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > keys/test.pub
+
+      # Destroy Bootstrap
+      - name: Destroy Bootstrap
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'bootstrap'
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🗑️ Bootstrap Layer Destroy..."
+          cd bootstrap && terragrunt destroy --terragrunt-non-interactive -auto-approve || true
+
+      # Destroy Compute
+      - name: Destroy Compute
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'compute'
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🗑️ Compute Layer Destroy..."
+          cd compute && terragrunt destroy --terragrunt-non-interactive -auto-approve || true
+
+      # Destroy Foundation
+      - name: Destroy Foundation
+        if: github.event.inputs.layer == 'all' || github.event.inputs.layer == 'foundation'
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          echo "🗑️ Foundation Layer Destroy..."
+          cd foundation && terragrunt destroy --terragrunt-non-interactive -auto-approve || true
+
+      - name: Destroy Complete
+        run: |
+          echo "=============================================="
+          echo "🎉 Terraform Destroy 완료!"
+          echo "=============================================="
+          echo "Cloud: ${{ github.event.inputs.cloud }}"
+          echo "Layer: ${{ github.event.inputs.layer }}"

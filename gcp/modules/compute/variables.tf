@@ -1,0 +1,93 @@
+# ============================================================================
+# Compute Module - variables.tf (GCP)
+# ============================================================================
+
+# ============================================================================
+# 기본 설정
+# ============================================================================
+variable "project_id" {
+  description = "GCP Project ID"
+  type        = string
+}
+
+variable "project_name" {
+  description = "Project name for resource naming"
+  type        = string
+}
+
+variable "region" {
+  description = "GCP region"
+  type        = string
+}
+
+# ============================================================================
+# Foundation에서 전달받는 값
+# ============================================================================
+variable "vpc_id" {
+  description = "VPC ID"
+  type        = string
+}
+
+variable "gke_subnet_id" {
+  description = "GKE subnet ID"
+  type        = string
+}
+
+variable "pods_range_name" {
+  description = "Name of the secondary IP range for pods"
+  type        = string
+  default     = "pods"
+}
+
+variable "services_range_name" {
+  description = "Name of the secondary IP range for services"
+  type        = string
+  default     = "services"
+}
+
+# ============================================================================
+# GKE 설정
+# ============================================================================
+variable "gke_cluster_name" {
+  description = "GKE cluster name"
+  type        = string
+}
+
+variable "gke_release_channel" {
+  description = "GKE release channel (RAPID, REGULAR, STABLE)"
+  type        = string
+  default     = "REGULAR"
+}
+
+variable "gke_enable_private_nodes" {
+  description = "Enable private nodes"
+  type        = bool
+  default     = true
+}
+
+variable "gke_enable_private_endpoint" {
+  description = "Enable private endpoint"
+  type        = bool
+  default     = false
+}
+
+variable "gke_master_ipv4_cidr" {
+  description = "CIDR block for master private endpoint"
+  type        = string
+  default     = "172.16.0.0/28"
+}
+
+variable "gke_master_authorized_cidr" {
+  description = "CIDR block authorized to access the master"
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
+# ============================================================================
+# Workload Identity 설정
+# ============================================================================
+variable "external_secrets_sa_name" {
+  description = "Service account name for External Secrets Operator"
+  type        = string
+  default     = "petclinic-dr-external-secrets"
+}

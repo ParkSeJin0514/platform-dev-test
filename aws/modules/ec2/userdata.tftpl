@@ -1,0 +1,167 @@
+#!/bin/bash
+
+# ============================================================================
+# Management Instance 초기화 스크립트
+# ============================================================================
+
+# 로그 파일 설정
+exec > >(tee /var/log/userdata.log) 2>&1
+echo "========== Userdata 시작: $(date) =========="
+
+set -xe
+
+# ------------------------------------------------
+# 네트워크 연결 대기 (NAT Gateway 라우팅 전파 대기)
+# ------------------------------------------------
+echo "네트워크 연결 대기 중..."
+MAX_NETWORK_RETRIES=30
+for i in $(seq 1 $MAX_NETWORK_RETRIES); do
+  if curl -s --connect-timeout 5 https://aws.amazon.com > /dev/null 2>&1; then
+    echo "네트워크 연결 확인!"
+    break
+  fi
+  echo "네트워크 대기 중... ($i/$MAX_NETWORK_RETRIES)"
+  sleep 10
+done
+
+# ------------------------------------------------
+# apt lock 해제 대기
+# ------------------------------------------------
+echo "apt lock 대기 중..."
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+  sleep 5
+done
+
+# ------------------------------------------------
+# 기본 패키지 설치
+# ------------------------------------------------
+echo "패키지 설치 중..."
+sudo apt-get update -y
+sudo apt-get install -y mysql-client curl unzip jq
+
+# ------------------------------------------------
+# Docker 설치
+# ------------------------------------------------
+echo "Docker 설치 중..."
+sudo apt-get install -y ca-certificates gnupg lsb-release
+
+# Docker GPG 키 추가
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Docker 저장소 추가
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Docker 설치
+sudo apt-get update -y
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# ubuntu 유저를 docker 그룹에 추가 (sudo 없이 docker 사용 가능)
+sudo usermod -aG docker ubuntu
+
+# Docker 서비스 시작 및 활성화
+sudo systemctl start docker
+sudo systemctl enable docker
+echo "Docker 버전: $(docker --version)"
+
+# ------------------------------------------------
+# AWS CLI v2 설치 (먼저 설치해야 EKS 조회 가능)
+# ------------------------------------------------
+echo "AWS CLI v2 설치 중..."
+cd /tmp
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q -o awscliv2.zip
+sudo ./aws/install
+rm -rf /tmp/aws /tmp/awscliv2.zip
+echo "AWS CLI 버전: $(/usr/local/bin/aws --version)"
+
+# ------------------------------------------------
+# eksctl 설치
+# ------------------------------------------------
+echo "eksctl 설치 중..."
+cd /tmp
+curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" -o eksctl.tar.gz
+tar -xzf eksctl.tar.gz
+sudo mv eksctl /usr/local/bin/eksctl
+sudo chmod +x /usr/local/bin/eksctl
+rm -f eksctl.tar.gz
+echo "eksctl 버전: $(eksctl version)"
+
+# ------------------------------------------------
+# kubectl 설치
+# ------------------------------------------------
+echo "kubectl 설치 중..."
+cd /tmp
+KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
+curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl
+rm -f kubectl
+echo "kubectl 버전: $(kubectl version --client)"
+
+# ------------------------------------------------
+# Helm 설치
+# ------------------------------------------------
+echo "Helm 설치 중..."
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+echo "Helm 버전: $(helm version --short)"
+
+# ------------------------------------------------
+# Java 설치
+# ------------------------------------------------
+echo "java 설치 중..."
+sudo apt update && sudo apt install -y openjdk-17-jdk
+echo "Java 버전: $(java -version)"
+
+# ------------------------------------------------
+# EKS 클러스터 생성 완료 대기
+# ------------------------------------------------
+echo "EKS 클러스터 생성 대기 중..."
+MAX_RETRIES=60
+RETRY_INTERVAL=30
+
+for i in $(seq 1 $MAX_RETRIES); do
+  CLUSTER_STATUS=$(/usr/local/bin/aws eks describe-cluster --region ${region} --name ${cluster_name} --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+  
+  echo "EKS 상태: $CLUSTER_STATUS ($i/$MAX_RETRIES)"
+  
+  if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+    echo "EKS 클러스터 ACTIVE 확인!"
+    break
+  fi
+  
+  sleep $RETRY_INTERVAL
+done
+
+# ------------------------------------------------
+# EKS kubeconfig 설정
+# ------------------------------------------------
+echo "kubeconfig 설정 중..."
+sudo -u ubuntu mkdir -p /home/ubuntu/.kube
+su - ubuntu -c "/usr/local/bin/aws eks update-kubeconfig --region ${region} --name ${cluster_name}"
+
+# ------------------------------------------------
+# ECR 로그인 헬퍼 스크립트 생성
+# ------------------------------------------------
+echo "ECR 로그인 헬퍼 스크립트 생성 중..."
+cat << 'EOFSCRIPT' | sudo tee /usr/local/bin/ecr-login
+#!/bin/bash
+# ECR 로그인 스크립트
+# 사용법: ecr-login [region]
+
+REGION=$${1:-${region}}
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ECR_URL="$${ACCOUNT_ID}.dkr.ecr.$${REGION}.amazonaws.com"
+
+echo "ECR 로그인 중: $${ECR_URL}"
+aws ecr get-login-password --region $${REGION} | docker login --username AWS --password-stdin $${ECR_URL}
+
+echo "ECR 로그인 완료!"
+echo "사용 예시:"
+echo "  docker pull $${ECR_URL}/my-repo:tag"
+echo "  docker push $${ECR_URL}/my-repo:tag"
+EOFSCRIPT
+
+sudo chmod +x /usr/local/bin/ecr-login
+
+echo "========== Userdata 완료: $(date) =========="
