@@ -56,19 +56,23 @@ resource "google_sql_database_instance" "mysql" {
 # ============================================================================
 # Private Service Connection (VPC Peering for Cloud SQL)
 # ============================================================================
-# 기존 Private IP range 사용 (petclinic-dr-private-ip)
-data "google_compute_global_address" "private_ip_range" {
-  name    = "petclinic-dr-private-ip"
-  project = var.project_id
+resource "google_compute_global_address" "private_ip_range" {
+  name          = "${var.project_name}-sql-ip"
+  project       = var.project_id
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = var.network_id
 }
 
 resource "google_service_networking_connection" "private_vpc_connection" {
   network                 = var.network_id
   service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [data.google_compute_global_address.private_ip_range.name]
+  reserved_peering_ranges = [google_compute_global_address.private_ip_range.name]
 
-  # 기존 연결이 있으면 업데이트
-  update_on_creation_fail = true
+  lifecycle {
+    ignore_changes = [reserved_peering_ranges]
+  }
 }
 
 # ============================================================================
