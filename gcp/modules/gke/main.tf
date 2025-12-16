@@ -7,6 +7,11 @@
 # ============================================================================
 # GKE Autopilot Cluster
 # ============================================================================
+data "google_service_account" "gke_cluster_sa" {
+  account_id = "gke-cluster-sa"
+  project    = var.project_id
+}
+
 resource "google_container_cluster" "autopilot" {
   name     = var.cluster_name
   location = var.region
@@ -18,6 +23,13 @@ resource "google_container_cluster" "autopilot" {
   # 네트워크 설정
   network    = var.network_id
   subnetwork = var.subnetwork_id
+
+  # 클러스터 서비스 계정 설정
+  cluster_autoscaling {
+    auto_provisioning_defaults {
+      service_account = data.google_service_account.gke_cluster_sa.email
+    }
+  }
 
   # IP 할당 설정
   ip_allocation_policy {
