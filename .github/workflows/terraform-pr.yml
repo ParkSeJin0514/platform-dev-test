@@ -1,0 +1,367 @@
+# ============================================================================
+# Terraform Plan on PR (Multi-Cloud: AWS / GCP)
+# ============================================================================
+# PR 생성/업데이트 시 자동으로 Terraform Plan 실행
+# Plan 결과를 PR 코멘트로 표시
+# ============================================================================
+
+name: Terraform Plan (PR)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'aws/**/*.tf'
+      - 'aws/**/*.hcl'
+      - 'gcp/**/*.tf'
+      - 'gcp/**/*.hcl'
+
+env:
+  TF_VERSION: 1.9.0
+  TG_VERSION: 0.54.0
+
+  # AWS 설정
+  AWS_REGION: ap-northeast-2
+
+  # GCP 설정
+  GCP_PROJECT_ID: kdt2-final-project-t1
+  GCP_REGION: asia-northeast3
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/605820610222/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+
+# 동시에 하나만 실행 (PR별로 분리)
+concurrency:
+  group: terraform-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================
+  # 변경된 클라우드 감지
+  # ============================================
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      aws-changed: ${{ steps.changes.outputs.aws }}
+      gcp-changed: ${{ steps.changes.outputs.gcp }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed files
+        id: changes
+        run: |
+          # PR에서 변경된 파일 목록
+          CHANGED_FILES=$(gh pr view ${{ github.event.pull_request.number }} --json files -q '.files[].path')
+
+          # AWS 변경 확인
+          if echo "$CHANGED_FILES" | grep -q "^aws/"; then
+            echo "aws=true" >> $GITHUB_OUTPUT
+            echo "✅ AWS 파일 변경 감지"
+          else
+            echo "aws=false" >> $GITHUB_OUTPUT
+            echo "⏭️ AWS 파일 변경 없음"
+          fi
+
+          # GCP 변경 확인
+          if echo "$CHANGED_FILES" | grep -q "^gcp/"; then
+            echo "gcp=true" >> $GITHUB_OUTPUT
+            echo "✅ GCP 파일 변경 감지"
+          else
+            echo "gcp=false" >> $GITHUB_OUTPUT
+            echo "⏭️ GCP 파일 변경 없음"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ============================================
+  # AWS Terraform Plan
+  # ============================================
+  terraform-plan-aws:
+    name: 'AWS Plan'
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.aws-changed == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    defaults:
+      run:
+        working-directory: aws
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TG_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      - name: Create SSH Key
+        run: |
+          mkdir -p keys
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > keys/test.pub
+
+      - name: Terraform Plan - Foundation
+        id: plan-foundation
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd foundation
+          echo "### AWS Foundation Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Plan - Compute
+        id: plan-compute
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd compute
+          echo "### AWS Compute Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Plan - Bootstrap
+        id: plan-bootstrap
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd bootstrap
+          echo "### AWS Bootstrap Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Plan Result to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `### 🔍 AWS Terraform Plan 결과
+
+            | Layer | Status |
+            |-------|--------|
+            | Foundation | ${{ steps.plan-foundation.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+            | Compute | ${{ steps.plan-compute.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+            | Bootstrap | ${{ steps.plan-bootstrap.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+
+            📋 상세 결과는 [Actions Summary](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})에서 확인하세요.
+
+            > Merge 시 **Terraform Apply**가 자동 실행됩니다.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================
+  # GCP Terraform Plan
+  # ============================================
+  terraform-plan-gcp:
+    name: 'GCP Plan'
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.gcp-changed == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    defaults:
+      run:
+        working-directory: gcp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: github-actions@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TG_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      - name: Terraform Plan - Foundation
+        id: plan-foundation
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd foundation
+          echo "### GCP Foundation Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Plan - Compute
+        id: plan-compute
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd compute
+          echo "### GCP Compute Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Plan - Bootstrap
+        id: plan-bootstrap
+        continue-on-error: true
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+        run: |
+          cd bootstrap
+          echo "### GCP Bootstrap Plan" >> $GITHUB_STEP_SUMMARY
+          terragrunt plan --terragrunt-non-interactive -no-color 2>&1 | tee plan-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Plan Result to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `### 🔍 GCP Terraform Plan 결과
+
+            | Layer | Status |
+            |-------|--------|
+            | Foundation | ${{ steps.plan-foundation.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+            | Compute | ${{ steps.plan-compute.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+            | Bootstrap | ${{ steps.plan-bootstrap.outcome == 'success' && '✅ Success' || '❌ Failed' }} |
+
+            📋 상세 결과는 [Actions Summary](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})에서 확인하세요.
+
+            > Merge 시 **Terraform Apply**가 자동 실행됩니다.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================
+  # Slack 알림 - PR Plan 완료
+  # ============================================
+  notify-slack:
+    name: Notify Slack
+    needs: [detect-changes, terraform-plan-aws, terraform-plan-gcp]
+    if: always() && (needs.terraform-plan-aws.result != 'skipped' || needs.terraform-plan-gcp.result != 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🔍 Terraform Plan 완료 - PR 리뷰 필요",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR:*\n#${{ github.event.pull_request.number }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ github.event.pull_request.user.login }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*AWS Plan:*\n${{ needs.terraform-plan-aws.result == 'success' && '✅ Success' || needs.terraform-plan-aws.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*GCP Plan:*\n${{ needs.terraform-plan-gcp.result == 'success' && '✅ Success' || needs.terraform-plan-gcp.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Title:*\n${{ github.event.pull_request.title }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "PR 리뷰하러 가기",
+                        "emoji": true
+                      },
+                      "url": "${{ github.event.pull_request.html_url }}",
+                      "style": "primary"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

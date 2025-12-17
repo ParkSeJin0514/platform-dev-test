@@ -77,13 +77,92 @@ jobs:
           echo "Layer: ${{ github.event.inputs.layer }}"
 
   # ============================================================================
-  # AWS Pre-Cleanup (AWS 선택 시)
+  # Slack 알림 - 승인 요청
+  # ============================================================================
+  notify-approval:
+    name: Notify & Wait for Approval
+    needs: [confirm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification - Approval Request
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚨 Terraform Destroy 승인 요청",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Cloud:*\n${{ github.event.inputs.cloud }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Layer:*\n${{ github.event.inputs.layer }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*실행자:*\n${{ github.actor }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*확인:*\n${{ github.event.inputs.confirm }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "🔴 *경고: 인프라 삭제가 요청되었습니다!* 승인 후 Destroy가 실행됩니다."
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "승인하러 가기",
+                        "emoji": true
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                      "style": "danger"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ============================================================================
+  # AWS Pre-Cleanup (승인 후, AWS 선택 시)
   # ============================================================================
   aws-pre-cleanup:
     name: 'AWS Pre-Cleanup'
-    needs: confirm
+    needs: [notify-approval]
     if: github.event.inputs.cloud == 'aws'
     runs-on: ubuntu-latest
+    environment: production  # 👈 승인 없으면 여기서 대기
     timeout-minutes: 15
     steps:
       - name: Configure AWS Credentials
@@ -231,13 +310,14 @@ jobs:
         run: echo "✅ AWS Pre-Cleanup 완료"
 
   # ============================================================================
-  # GCP Pre-Cleanup (GCP 선택 시)
+  # GCP Pre-Cleanup (승인 후, GCP 선택 시)
   # ============================================================================
   gcp-pre-cleanup:
     name: 'GCP Pre-Cleanup'
-    needs: confirm
+    needs: [notify-approval]
     if: github.event.inputs.cloud == 'gcp'
     runs-on: ubuntu-latest
+    environment: production  # 👈 승인 없으면 여기서 대기
     timeout-minutes: 10
     steps:
       - name: Authenticate to Google Cloud
@@ -312,12 +392,12 @@ jobs:
         run: echo "✅ GCP Pre-Cleanup 완료"
 
   # ============================================================================
-  # Terraform Destroy
+  # Terraform Destroy (승인 및 Pre-Cleanup 후 실행)
   # ============================================================================
   destroy:
     name: 'Terraform Destroy'
-    needs: [confirm, aws-pre-cleanup, gcp-pre-cleanup]
-    if: always() && needs.confirm.result == 'success'
+    needs: [notify-approval, aws-pre-cleanup, gcp-pre-cleanup]
+    if: always() && needs.notify-approval.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -410,81 +490,6 @@ jobs:
           echo "=============================================="
           echo "Cloud: ${{ github.event.inputs.cloud }}"
           echo "Layer: ${{ github.event.inputs.layer }}"
-
-  # ============================================
-  # Slack 알림 - 시작
-  # ============================================
-  notify-start:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send Slack Notification - Start
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "🗑️ Terraform Destroy 시작",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Cloud:*\n${{ github.event.inputs.cloud }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Layer:*\n${{ github.event.inputs.layer }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*실행자:*\n${{ github.actor }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*확인:*\n${{ github.event.inputs.confirm }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "⚠️ 인프라 삭제가 시작되었습니다!"
-                    }
-                  ]
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "워크플로우 보기",
-                        "emoji": true
-                      },
-                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
   # ============================================
   # Slack 알림 - 완료
