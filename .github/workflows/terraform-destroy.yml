@@ -176,16 +176,46 @@ jobs:
 
           echo "✅ Ingress 및 LoadBalancer 정리 완료"
 
+      - name: Force Delete ALB and Target Groups
+        if: steps.configure-kubectl.outputs.cluster_exists == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "🧹 ALB 및 Target Group 강제 삭제..."
+
+          # petclinic 관련 ALB 강제 삭제
+          for alb_arn in $(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic') || contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd')].LoadBalancerArn" --output text 2>/dev/null); do
+            echo "  삭제 중: $alb_arn"
+            # Listener 먼저 삭제
+            for listener_arn in $(aws elbv2 describe-listeners --load-balancer-arn $alb_arn --query 'Listeners[*].ListenerArn' --output text 2>/dev/null); do
+              aws elbv2 delete-listener --listener-arn $listener_arn 2>/dev/null || true
+            done
+            # ALB 삭제
+            aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn 2>/dev/null || true
+          done
+
+          echo "⏳ ALB 삭제 대기 (30초)..."
+          sleep 30
+
+          # 고아 Target Group 삭제
+          echo "🧹 고아 Target Group 삭제..."
+          for tg_arn in $(aws elbv2 describe-target-groups --query "TargetGroups[?contains(TargetGroupName, 'k8s') || contains(TargetGroupName, 'petclinic')].TargetGroupArn" --output text 2>/dev/null); do
+            echo "  삭제 중: $tg_arn"
+            aws elbv2 delete-target-group --target-group-arn $tg_arn 2>/dev/null || true
+          done
+
+          echo "✅ ALB 및 Target Group 정리 완료"
+
       - name: Wait for ALB Deletion
         if: steps.configure-kubectl.outputs.cluster_exists == 'true'
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          echo "⏳ AWS 로드밸런서 삭제 대기..."
+          echo "⏳ AWS 로드밸런서 삭제 확인..."
 
           # ALB 삭제 확인 (최대 5분 대기)
           for i in {1..30}; do
-            ALB_COUNT=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd')].LoadBalancerArn" --output text 2>/dev/null | wc -w || echo "0")
+            ALB_COUNT=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd') || contains(LoadBalancerName, 'petclinic')].LoadBalancerArn" --output text 2>/dev/null | wc -w || echo "0")
             if [ "$ALB_COUNT" -eq 0 ]; then
               echo "✅ 모든 ALB 삭제 완료"
               break
