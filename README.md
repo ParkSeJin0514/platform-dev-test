@@ -103,6 +103,60 @@ gcloud iam service-accounts add-iam-policy-binding \
   --project="kdt2-final-project-t1"
 ```
 
+## 🔔 Slack 알림
+
+Terraform Apply/Destroy 실행 시 자동으로 Slack 알림이 발송됩니다.
+
+### 알림 종류
+
+| 시점 | 내용 |
+|------|------|
+| **시작** | 워크플로우 시작, Cloud/Layer 정보, 실행자 |
+| **완료** | 성공/실패 상태, 상세 로그 링크 |
+
+### 설정 방법
+
+1. **GitHub Secrets에 Slack Webhook URL 추가**
+   - Repository → Settings → Secrets and variables → Actions
+   - `SLACK_WEBHOOK_URL` 시크릿 추가
+
+2. **Slack Incoming Webhook 생성**
+   - Slack App 생성 → Incoming Webhooks 활성화
+   - 채널에 Webhook 추가 후 URL 복사
+
+### 알림 예시
+
+```
+🚀 Terraform Apply 시작
+━━━━━━━━━━━━━━━━━━━━━
+Cloud: aws
+Layer: all
+실행자: your-username
+[워크플로우 보기] 버튼
+```
+
+## 🛡️ ALB Security Group 자동화
+
+AWS EKS에서 ALB Ingress Controller가 생성하는 ALB → Worker Node 트래픽을 자동으로 허용합니다.
+
+### 자동 설정되는 규칙
+
+| 규칙 | 소스 | 대상 | 포트 |
+|------|------|------|------|
+| `node_ingress_alb` | VPC CIDR | Node SG | 0-65535 (TCP) |
+| `cluster_ingress_alb` | VPC CIDR | Cluster SG | 0-65535 (TCP) |
+
+### 이전 수동 작업 (더 이상 불필요)
+
+```bash
+# 더 이상 필요 없음 - Terraform이 자동으로 처리
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-xxx \
+  --protocol tcp \
+  --port 0-65535 \
+  --cidr 10.0.0.0/16
+```
+
 ## 🚀 사용 방법
 
 ### GitHub Actions 실행
