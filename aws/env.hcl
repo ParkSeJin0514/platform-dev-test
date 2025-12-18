@@ -109,6 +109,6 @@ locals {
   # =========================================================================
   argocd_chart_version    = "5.51.6"
   argocd_namespace        = "argocd"
-  gitops_repo_url = "https://github.com/ParkSeJin0514/platform-gitops.git"
+  gitops_repo_url = "https://github.com/ParkSeJin0514/platform-gitops-last.git"
   gitops_target_revision  = "main"
 }
