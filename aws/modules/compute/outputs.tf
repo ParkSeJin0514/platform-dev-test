@@ -136,6 +136,11 @@ output "karpenter_interruption_queue_name" {
   value       = aws_sqs_queue.karpenter_interruption.name
 }
 
+output "karpenter_iam_ready" {
+  description = "Karpenter IAM 준비 완료 (depends_on용) - IAM 전파 대기 완료 후 true"
+  value       = time_sleep.wait_for_karpenter_iam.id != "" ? true : false
+}
+
 # ============================================================================
 # 접속 가이드
 # ============================================================================

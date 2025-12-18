@@ -150,6 +150,16 @@ resource "aws_iam_role_policy_attachment" "karpenter_controller" {
   policy_arn = aws_iam_policy.karpenter_controller.arn
 }
 
+# Karpenter Controller IRSA Role 전파 대기
+resource "time_sleep" "wait_for_karpenter_controller_iam" {
+  depends_on = [
+    aws_iam_role.karpenter_controller,
+    aws_iam_role_policy_attachment.karpenter_controller
+  ]
+
+  create_duration = "15s"  # IRSA 전파 대기
+}
+
 # ============================================================================
 # 2. Karpenter Node IAM Role & Instance Profile
 # ============================================================================
@@ -213,11 +223,40 @@ resource "aws_iam_instance_profile" "karpenter_node" {
   }
 }
 
+# ============================================================================
+# IAM 권한 전파 대기 (time_sleep)
+# ============================================================================
+# AWS IAM은 Eventually Consistent - 권한 생성 후 전파까지 시간 필요
+# Karpenter 노드가 EKS에 등록 실패하는 것을 방지
+#
+# 왜 필요한가?
+#   1. IAM Role/Policy 생성 → AWS 전체 리전에 전파 (10-30초)
+#   2. EKS Access Entry 생성 → API Server에 반영 (추가 시간)
+#   3. Node Bootstrap → kubelet이 API Server에 인증 시도
+#   만약 3번이 1,2번보다 먼저 실행되면 인증 실패로 노드 등록 안됨
+# ============================================================================
+
+resource "time_sleep" "wait_for_karpenter_iam" {
+  depends_on = [
+    aws_iam_role.karpenter_node,
+    aws_iam_role_policy_attachment.karpenter_node_worker,
+    aws_iam_role_policy_attachment.karpenter_node_cni,
+    aws_iam_role_policy_attachment.karpenter_node_ecr,
+    aws_iam_role_policy_attachment.karpenter_node_ssm,
+    aws_iam_instance_profile.karpenter_node
+  ]
+
+  create_duration = "30s"  # IAM 전파 대기 시간
+}
+
 # EKS Access Entry - Karpenter Node가 EKS에 자동 접근
 resource "aws_eks_access_entry" "karpenter_node" {
   cluster_name  = module.eks.cluster_id
   principal_arn = aws_iam_role.karpenter_node.arn
   type          = "EC2_LINUX"
+
+  # IAM Role 전파 완료 후 Access Entry 생성
+  depends_on = [time_sleep.wait_for_karpenter_iam]
 }
 
 # ============================================================================

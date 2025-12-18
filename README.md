@@ -349,6 +349,67 @@ cd ../bootstrap && terragrunt apply
 - **Database**: 각 클라우드 별도 DB (Cloud SQL)
 - **Failover**: Manual (ArgoCD를 통한 GitOps)
 
+## ⏱️ Karpenter IAM 타이밍 이슈 해결
+
+### 문제
+
+Karpenter가 노드를 프로비저닝할 때, 다음 순서로 동작합니다:
+
+```
+1. IAM Role/Policy 생성 → AWS 전체 리전에 전파 (10-30초)
+2. EKS Access Entry 생성 → API Server에 반영
+3. EC2 Node Bootstrap → kubelet이 API Server에 인증 시도
+```
+
+**문제**: 3번이 1,2번보다 먼저 실행되면 노드 등록 실패
+
+### 해결책
+
+`time_sleep` 리소스를 사용하여 IAM 권한 전파를 대기합니다.
+
+```hcl
+# aws/modules/compute/karpenter.tf
+
+# IAM 권한 전파 대기 (30초)
+resource "time_sleep" "wait_for_karpenter_iam" {
+  depends_on = [
+    aws_iam_role.karpenter_node,
+    aws_iam_role_policy_attachment.karpenter_node_worker,
+    aws_iam_role_policy_attachment.karpenter_node_cni,
+    aws_iam_role_policy_attachment.karpenter_node_ecr,
+    aws_iam_role_policy_attachment.karpenter_node_ssm,
+    aws_iam_instance_profile.karpenter_node
+  ]
+  create_duration = "30s"
+}
+
+# EKS Access Entry - IAM 전파 완료 후 생성
+resource "aws_eks_access_entry" "karpenter_node" {
+  cluster_name  = module.eks.cluster_id
+  principal_arn = aws_iam_role.karpenter_node.arn
+  type          = "EC2_LINUX"
+
+  depends_on = [time_sleep.wait_for_karpenter_iam]
+}
+```
+
+### 타이밍 설정
+
+| 리소스 | 대기 시간 | 이유 |
+|--------|----------|------|
+| Karpenter Node IAM | 30초 | IAM Role/Policy 전파 |
+| Karpenter Controller IRSA | 15초 | OIDC 기반 IRSA 전파 |
+
+### 실무 권장 사항
+
+| 방법 | 사용 시점 | 장점 | 단점 |
+|------|----------|------|------|
+| `depends_on` | 리소스 간 명확한 의존성 | 선언적, 명확함 | API 레벨만 보장 |
+| `time_sleep` | IAM 전파 등 실제 지연 | 안정적 | 고정 대기 시간 |
+| ArgoCD Sync Wave | GitOps 환경 | 자동화 | 정확한 타이밍 어려움 |
+
+---
+
 ## 🧹 AWS Terraform Destroy - ALB/Target Group 정리
 
 Terraform destroy 실행 시 Kubernetes에서 생성한 ALB/Target Group이 남아있으면 삭제가 실패할 수 있습니다.
