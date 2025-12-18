@@ -136,7 +136,7 @@ resource "kubectl_manifest" "root_application" {
       source:
         repoURL: ${var.gitops_repo_url}
         targetRevision: ${var.gitops_target_revision}
-        path: apps
+        path: aws/apps
       destination:
         server: https://kubernetes.default.svc
         namespace: ${var.argocd_namespace}
