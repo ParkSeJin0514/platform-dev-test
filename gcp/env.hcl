@@ -46,7 +46,7 @@ locals {
   argocd_namespace       = "argocd"
 
   # GitOps 저장소
-  gitops_repo_url        = "https://github.com/ParkSeJin0514/platform-gitops-test.git"
+  gitops_repo_url        = "https://github.com/ParkSeJin0514/platform-gitops-last.git"
   gitops_target_revision = "main"
   gitops_path            = "gcp/apps"  # GCP용 apps 경로
 
