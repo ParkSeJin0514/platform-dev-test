@@ -60,10 +60,13 @@ resource "aws_eks_cluster" "cluster" {
 }
 
 # ============================================================================
-# 1-1. VPC CNI Add-on (Prefix Delegation 활성화)
+# 1-1. VPC CNI Add-on
 # ============================================================================
-# Prefix Delegation: 노드당 최대 110+ Pod 지원
-# 기본 Secondary IP 모드: 노드당 17 Pod (t3.medium 기준)
+# Secondary IP 모드 사용 (기본값)
+# - /24 서브넷에서 IP 고갈 방지
+# - 노드당 Pod 수: 인스턴스 타입에 따라 결정 (t3.medium: 17개)
+#
+# 참고: Prefix Delegation은 /20 이상 대형 서브넷에서 권장
 # ============================================================================
 
 resource "aws_eks_addon" "vpc_cni" {
@@ -71,13 +74,6 @@ resource "aws_eks_addon" "vpc_cni" {
   addon_name               = "vpc-cni"
   addon_version            = var.vpc_cni_version
   resolve_conflicts_on_update = "OVERWRITE"
-
-  configuration_values = jsonencode({
-    env = {
-      ENABLE_PREFIX_DELEGATION = "true"
-      WARM_PREFIX_TARGET       = "1"
-    }
-  })
 
   depends_on = [aws_eks_cluster.cluster]
 
