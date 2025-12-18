@@ -60,6 +60,31 @@ resource "aws_eks_cluster" "cluster" {
 }
 
 # ============================================================================
+# 1-1. VPC CNI Add-on (Prefix Delegation 활성화)
+# ============================================================================
+# Prefix Delegation: 노드당 최대 110+ Pod 지원
+# 기본 Secondary IP 모드: 노드당 17 Pod (t3.medium 기준)
+# ============================================================================
+
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name             = aws_eks_cluster.cluster.name
+  addon_name               = "vpc-cni"
+  addon_version            = var.vpc_cni_version
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  configuration_values = jsonencode({
+    env = {
+      ENABLE_PREFIX_DELEGATION = "true"
+      WARM_PREFIX_TARGET       = "1"
+    }
+  })
+
+  depends_on = [aws_eks_cluster.cluster]
+
+  tags = var.tags
+}
+
+# ============================================================================
 # 2. Ubuntu 24.04 EKS AMI 조회
 # ============================================================================
 # AWS SSM Parameter Store에서 Canonical이 제공하는 공식 Ubuntu EKS AMI 조회

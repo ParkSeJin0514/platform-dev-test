@@ -195,3 +195,12 @@ variable "vpc_cidr" {
   type        = string
   default     = null
 }
+
+# ===================================
+# EKS Add-ons
+# ===================================
+variable "vpc_cni_version" {
+  description = "Version of the VPC CNI add-on"
+  type        = string
+  default     = "v1.19.2-eksbuild.5"
+}
