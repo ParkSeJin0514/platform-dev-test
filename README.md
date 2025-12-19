@@ -592,6 +592,20 @@ kubectl get pods -A
 - VPC 내부에서만 접근 가능
 - 외부 IP 없음
 
+**Private Service Connection 구조:**
+```
+┌─────────────────┐     VPC Peering      ┌─────────────────────┐
+│  petclinic-dr   │ ◄──────────────────► │  Google Managed     │
+│     VPC         │  servicenetworking-  │  Service Network    │
+│  172.16.0.0/16  │  googleapis-com      │  (Cloud SQL 위치)   │
+└─────────────────┘                      └─────────────────────┘
+```
+
+**Terraform 리소스 (cloudsql/main.tf):**
+- `google_compute_global_address.private_ip_range`: VPC Peering용 IP 범위 (/16)
+- `google_service_networking_connection.private_vpc_connection`: VPC Peering 생성
+- Apply 시 자동 생성, Destroy 시 Pre-Cleanup에서 강제 삭제
+
 ### Workload Identity
 ```yaml
 # GKE Service Account 연동
