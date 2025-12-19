@@ -4,40 +4,34 @@
 
 output "cluster_id" {
   description = "GKE cluster ID"
-  value       = google_container_cluster.standard.id
+  value       = google_container_cluster.autopilot.id
 }
 
 output "cluster_name" {
   description = "GKE cluster name"
-  value       = google_container_cluster.standard.name
+  value       = google_container_cluster.autopilot.name
 }
 
 output "cluster_endpoint" {
   description = "GKE cluster endpoint"
-  value       = google_container_cluster.standard.endpoint
+  value       = google_container_cluster.autopilot.endpoint
   sensitive   = true
 }
 
 output "cluster_ca_certificate" {
   description = "GKE cluster CA certificate"
-  value       = google_container_cluster.standard.master_auth[0].cluster_ca_certificate
+  value       = google_container_cluster.autopilot.master_auth[0].cluster_ca_certificate
   sensitive   = true
 }
 
 output "cluster_location" {
   description = "GKE cluster location"
-  value       = google_container_cluster.standard.location
+  value       = google_container_cluster.autopilot.location
 }
 
 output "cluster_self_link" {
   description = "GKE cluster self link"
-  value       = google_container_cluster.standard.self_link
-}
-
-# Node Pool
-output "node_pool_name" {
-  description = "GKE node pool name"
-  value       = google_container_node_pool.primary.name
+  value       = google_container_cluster.autopilot.self_link
 }
 
 # Workload Identity Pool

@@ -1,5 +1,5 @@
 # ============================================================================
-# Compute Layer (GCP) - GKE Standard, Workload Identity
+# Compute Layer (GCP) - GKE Autopilot, Workload Identity
 # ============================================================================
 # 의존성: Foundation (VPC, Subnet)
 # 출력값: cluster_endpoint, Workload Identity → Bootstrap에서 사용
@@ -53,21 +53,10 @@ inputs = {
   pods_range_name     = dependency.foundation.outputs.pods_secondary_range_name
   services_range_name = dependency.foundation.outputs.services_secondary_range_name
 
-  # GKE 설정
-  gke_cluster_name            = local.env.locals.gke_cluster_name
-  gke_release_channel         = local.env.locals.gke_release_channel
-  gke_enable_private_nodes    = local.env.locals.gke_enable_private_nodes
-  gke_enable_private_endpoint = local.env.locals.gke_enable_private_endpoint
-  gke_master_ipv4_cidr        = local.env.locals.gke_master_ipv4_cidr
-  gke_master_authorized_cidr  = local.env.locals.gke_master_authorized_cidr
-
-  # GKE Node Pool 설정
-  gke_node_count        = local.env.locals.gke_node_count
-  gke_node_min_count    = local.env.locals.gke_node_min_count
-  gke_node_max_count    = local.env.locals.gke_node_max_count
-  gke_node_machine_type = local.env.locals.gke_node_machine_type
-  gke_node_disk_size    = local.env.locals.gke_node_disk_size
-  gke_node_disk_type    = local.env.locals.gke_node_disk_type
+  # GKE Autopilot 설정
+  gke_cluster_name           = local.env.locals.gke_cluster_name
+  gke_release_channel        = local.env.locals.gke_release_channel
+  gke_master_authorized_cidr = local.env.locals.gke_master_authorized_cidr
 
   # Workload Identity 설정
   external_secrets_sa_name = local.env.locals.external_secrets_sa_name

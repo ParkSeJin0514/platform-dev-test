@@ -46,7 +46,7 @@ variable "services_range_name" {
 }
 
 # ============================================================================
-# GKE 설정
+# GKE Autopilot 설정
 # ============================================================================
 variable "gke_cluster_name" {
   description = "GKE cluster name"
@@ -59,67 +59,10 @@ variable "gke_release_channel" {
   default     = "REGULAR"
 }
 
-variable "gke_enable_private_nodes" {
-  description = "Enable private nodes"
-  type        = bool
-  default     = true
-}
-
-variable "gke_enable_private_endpoint" {
-  description = "Enable private endpoint"
-  type        = bool
-  default     = false
-}
-
-variable "gke_master_ipv4_cidr" {
-  description = "CIDR block for master private endpoint"
-  type        = string
-  default     = "172.17.0.0/28"
-}
-
 variable "gke_master_authorized_cidr" {
   description = "CIDR block authorized to access the master"
   type        = string
   default     = "0.0.0.0/0"
-}
-
-# ============================================================================
-# GKE Node Pool 설정
-# ============================================================================
-variable "gke_node_count" {
-  description = "Initial number of nodes per zone"
-  type        = number
-  default     = 1
-}
-
-variable "gke_node_min_count" {
-  description = "Minimum number of nodes per zone for autoscaling"
-  type        = number
-  default     = 1
-}
-
-variable "gke_node_max_count" {
-  description = "Maximum number of nodes per zone for autoscaling"
-  type        = number
-  default     = 3
-}
-
-variable "gke_node_machine_type" {
-  description = "Machine type for nodes"
-  type        = string
-  default     = "e2-medium"
-}
-
-variable "gke_node_disk_size" {
-  description = "Disk size in GB for nodes"
-  type        = number
-  default     = 50
-}
-
-variable "gke_node_disk_type" {
-  description = "Disk type for nodes (pd-standard, pd-ssd, pd-balanced)"
-  type        = string
-  default     = "pd-balanced"
 }
 
 # ============================================================================

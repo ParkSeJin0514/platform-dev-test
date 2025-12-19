@@ -26,28 +26,13 @@ locals {
   vpc_cidr = "172.16.0.0/16"
 
   # =========================================================================
-  # GKE Standard 설정 (Compute)
+  # GKE Autopilot 설정 (Compute)
   # =========================================================================
   gke_cluster_name    = "petclinic-dr-gke"
   gke_release_channel = "REGULAR"  # RAPID, REGULAR, STABLE 중 선택
 
-  # Private Cluster 설정
-  gke_enable_private_nodes    = true
-  gke_enable_private_endpoint = false  # kubectl 접근 허용
-  gke_master_ipv4_cidr        = "172.17.0.0/28"
-
   # Master Authorized Networks (GitHub Actions 등에서 접근)
   gke_master_authorized_cidr = "0.0.0.0/0"
-
-  # =========================================================================
-  # GKE Node Pool 설정
-  # =========================================================================
-  gke_node_count        = 1           # 초기 노드 수 (zone당)
-  gke_node_min_count    = 1           # 최소 노드 수 (zone당)
-  gke_node_max_count    = 3           # 최대 노드 수 (zone당)
-  gke_node_machine_type = "e2-medium" # 노드 머신 타입
-  gke_node_disk_size    = 50          # 노드 디스크 크기 (GB)
-  gke_node_disk_type    = "pd-balanced" # pd-standard, pd-ssd, pd-balanced
 
   # =========================================================================
   # ArgoCD 설정 (Bootstrap)

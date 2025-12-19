@@ -11,7 +11,7 @@ AWS Primary + GCP DR 환경을 위한 Terraform/Terragrunt IaC 코드
 │         AWS (Primary)           │          GCP (DR/Secondary)       │
 ├─────────────────────────────────┼───────────────────────────────────┤
 │  VPC (10.0.0.0/16)              │  VPC (172.16.0.0/16)              │
-│  EKS + Managed Node Group       │  GKE Standard + Node Pool         │
+│  EKS + Managed Node Group       │  GKE Autopilot                    │
 │  Karpenter (Auto Scaling)       │  Cluster Autoscaler               │
 │  ALB Controller                 │  GKE Ingress (GCE)                │
 │  EFS CSI Driver                 │  -                                │
@@ -44,7 +44,7 @@ platform-dev-last/
 │   ├── terragrunt.hcl           # Root Terragrunt (GCS Backend)
 │   ├── env.hcl                  # GCP 환경 변수
 │   ├── foundation/              # VPC, Subnet, Cloud NAT
-│   ├── compute/                 # GKE Standard, Cloud SQL, VMs
+│   ├── compute/                 # GKE Autopilot, Cloud SQL, VMs
 │   ├── bootstrap/               # ArgoCD
 │   └── modules/
 │       ├── network/
@@ -376,14 +376,14 @@ cd ../bootstrap && terragrunt apply
 | Layer | 설명 | AWS 리소스 | GCP 리소스 |
 |-------|------|-----------|-----------|
 | **Foundation** | 네트워크 인프라 | VPC, Subnet, NAT Gateway | VPC, Subnet, Cloud NAT |
-| **Compute** | 컴퓨팅 리소스 | EKS, RDS, IAM Roles | GKE Standard, Cloud SQL, VMs |
+| **Compute** | 컴퓨팅 리소스 | EKS, RDS, IAM Roles | GKE Autopilot, Cloud SQL, VMs |
 | **Bootstrap** | GitOps 설정 | ArgoCD | ArgoCD |
 
 ## ☁️ 주요 차이점 (AWS vs GCP)
 
 | 항목 | AWS | GCP |
 |------|-----|-----|
-| Kubernetes | EKS + Managed Node | GKE Standard + Node Pool |
+| Kubernetes | EKS + Managed Node | GKE Autopilot |
 | Auto Scaling | Karpenter | Cluster Autoscaler |
 | Load Balancer | ALB Controller | GKE Ingress |
 | Storage | EFS CSI Driver | - |
@@ -581,14 +581,13 @@ ssh gcp-mgmt
 kubectl get pods -A
 ```
 
-### GKE Standard (Public Cluster)
-- Node Pool 기반 노드 관리
-- 노드 단위 과금 (e2-medium 기본)
-- Cluster Autoscaler로 자동 스케일링 (min: 1, max: 3)
-- DR 환경에서 빠른 Failover를 위해 노드 상시 대기
+### GKE Autopilot (Public Cluster)
+- Google 관리형 노드 (자동 프로비저닝)
+- Pod 단위 과금 (사용한 만큼만 지불)
+- 자동 스케일링 및 노드 관리
 - **Public Cluster 모드**: `enable_private_nodes = false`
-  - 노드에 공개 IP 할당 (방화벽으로 보안 제어)
-  - Private Cluster는 Compute Engine 기본 SA 필요 (삭제된 상태)
+  - Compute Engine 기본 SA 삭제로 인해 Private Cluster 사용 불가
+  - 방화벽으로 보안 제어
 
 ### Cloud SQL Private Access
 - Private Service Connection 사용

@@ -1,38 +1,35 @@
 # ============================================================================
 # GKE Module - main.tf
 # ============================================================================
-# GKE Standard Cluster 및 Workload Identity 설정
+# GKE Autopilot Cluster 및 Workload Identity 설정
 # ============================================================================
 
 # ============================================================================
-# GKE Standard Cluster
+# GKE Autopilot Cluster
 # ============================================================================
 data "google_service_account" "gke_cluster_sa" {
   account_id = "gke-cluster-sa"
   project    = var.project_id
 }
 
-resource "google_container_cluster" "standard" {
+resource "google_container_cluster" "autopilot" {
   name     = var.cluster_name
   location = var.region
   project  = var.project_id
 
-  # Standard 모드 (Autopilot 비활성화)
-  # 초기 노드 풀 삭제 (별도 노드 풀 사용)
-  remove_default_node_pool = true
-  initial_node_count       = 1
-
-  # 초기 노드 설정 (default SA 대신 커스텀 SA 사용)
-  node_config {
-    service_account = data.google_service_account.gke_cluster_sa.email
-    oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform"
-    ]
-  }
+  # Autopilot 모드 활성화
+  enable_autopilot = true
 
   # 네트워크 설정
   network    = var.network_id
   subnetwork = var.subnetwork_id
+
+  # 클러스터 서비스 계정 설정
+  cluster_autoscaling {
+    auto_provisioning_defaults {
+      service_account = data.google_service_account.gke_cluster_sa.email
+    }
+  }
 
   # IP 할당 설정
   ip_allocation_policy {
@@ -40,8 +37,7 @@ resource "google_container_cluster" "standard" {
     services_secondary_range_name = var.services_range_name
   }
 
-  # Public Cluster 설정 (Private 노드 비활성화)
-  # Note: Compute Engine 기본 SA 삭제로 인해 Private Cluster 생성 불가
+  # Public Cluster 설정 (Compute Engine 기본 SA 삭제로 인해 Private 사용 불가)
   private_cluster_config {
     enable_private_nodes    = false
     enable_private_endpoint = false
@@ -83,101 +79,6 @@ resource "google_container_cluster" "standard" {
   # Binary Authorization (보안)
   binary_authorization {
     evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
-  }
-
-  # Cluster Autoscaling 설정 (노드 자동 프로비저닝)
-  cluster_autoscaling {
-    enabled = var.cluster_autoscaling_enabled
-
-    dynamic "resource_limits" {
-      for_each = var.cluster_autoscaling_enabled ? [1] : []
-      content {
-        resource_type = "cpu"
-        minimum       = var.autoscaling_cpu_min
-        maximum       = var.autoscaling_cpu_max
-      }
-    }
-
-    dynamic "resource_limits" {
-      for_each = var.cluster_autoscaling_enabled ? [1] : []
-      content {
-        resource_type = "memory"
-        minimum       = var.autoscaling_memory_min
-        maximum       = var.autoscaling_memory_max
-      }
-    }
-
-    auto_provisioning_defaults {
-      service_account = data.google_service_account.gke_cluster_sa.email
-      oauth_scopes = [
-        "https://www.googleapis.com/auth/cloud-platform"
-      ]
-    }
-  }
-}
-
-# ============================================================================
-# GKE Node Pool
-# ============================================================================
-resource "google_container_node_pool" "primary" {
-  name       = "${var.cluster_name}-node-pool"
-  location   = var.region
-  cluster    = google_container_cluster.standard.name
-  project    = var.project_id
-
-  # 노드 수 설정
-  initial_node_count = var.node_count
-
-  # Autoscaling 설정
-  autoscaling {
-    min_node_count = var.node_min_count
-    max_node_count = var.node_max_count
-  }
-
-  # 노드 관리 설정
-  management {
-    auto_repair  = true
-    auto_upgrade = true
-  }
-
-  # 노드 설정
-  node_config {
-    machine_type = var.node_machine_type
-    disk_size_gb = var.node_disk_size
-    disk_type    = var.node_disk_type
-
-    # 서비스 계정
-    service_account = data.google_service_account.gke_cluster_sa.email
-    oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform"
-    ]
-
-    # Workload Identity 활성화
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
-
-    # 라벨
-    labels = {
-      environment = "dr"
-      project     = var.project_name
-      node-pool   = "primary"
-    }
-
-    # 태그 (방화벽용)
-    tags = ["gke-node", "${var.cluster_name}-node"]
-
-    # Shielded Instance 설정 (보안)
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
-    }
-  }
-
-  # 업그레이드 설정
-  upgrade_settings {
-    max_surge       = 1
-    max_unavailable = 0
   }
 }
 
