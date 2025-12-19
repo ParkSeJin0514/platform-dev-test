@@ -194,38 +194,51 @@ jobs:
       - name: Cleanup Karpenter Resources
         if: steps.configure-kubectl.outputs.cluster_exists == 'true'
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           echo "🧹 Karpenter 정리 시작..."
 
-          # 1. Karpenter Controller 중지 (새 노드 생성 방지)
-          echo "  1️⃣ Karpenter Controller 중지..."
-          kubectl scale deployment karpenter -n kube-system --replicas=0 --timeout=30s 2>/dev/null || true
+          # 1. EC2 인스턴스 먼저 강제 종료 (Karpenter 태그 기준) - 가장 먼저!
+          echo "  1️⃣ Karpenter EC2 인스턴스 강제 종료..."
+          KARPENTER_INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:karpenter.sh/nodepool,Values=*" "Name=instance-state-name,Values=running,pending,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+          if [ -n "$KARPENTER_INSTANCES" ]; then
+            echo "    종료할 인스턴스: $KARPENTER_INSTANCES"
+            aws ec2 terminate-instances --instance-ids $KARPENTER_INSTANCES 2>/dev/null || true
+          else
+            echo "    Karpenter EC2 인스턴스 없음"
+          fi
 
-          # 2. NodePool 삭제 (새 노드 생성 방지)
-          echo "  2️⃣ NodePool 삭제..."
+          # 2. Karpenter Controller 중지 (새 노드 생성 방지)
+          echo "  2️⃣ Karpenter Controller 중지..."
+          kubectl scale deployment karpenter -n kube-system --replicas=0 --timeout=60s 2>/dev/null || true
+          sleep 5
+
+          # 3. NodePool 삭제 (새 노드 생성 방지)
+          echo "  3️⃣ NodePool 삭제..."
           kubectl get nodepools -o name 2>/dev/null | while read np; do
             kubectl patch $np -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
             kubectl delete $np --force --grace-period=0 --timeout=30s 2>/dev/null || true
           done
 
-          # 3. EC2NodeClass 삭제
-          echo "  3️⃣ EC2NodeClass 삭제..."
+          # 4. EC2NodeClass 삭제
+          echo "  4️⃣ EC2NodeClass 삭제..."
           kubectl get ec2nodeclasses -o name 2>/dev/null | while read ec; do
             kubectl patch $ec -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
             kubectl delete $ec --force --grace-period=0 --timeout=30s 2>/dev/null || true
           done
 
-          # 4. NodeClaim Finalizer 제거 및 삭제
-          echo "  4️⃣ NodeClaim 삭제..."
+          # 5. NodeClaim Finalizer 제거 및 삭제
+          echo "  5️⃣ NodeClaim 삭제..."
           kubectl get nodeclaims -o name 2>/dev/null | while read nc; do
             kubectl patch $nc -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
             kubectl delete $nc --force --grace-period=0 --timeout=30s 2>/dev/null || true
           done
 
-          # 5. Karpenter 노드 삭제 (managed-by=karpenter 라벨)
-          echo "  5️⃣ Karpenter 노드 삭제..."
-          KARPENTER_NODES=$(kubectl get nodes -l managed-by=karpenter -o name 2>/dev/null || true)
+          # 6. Karpenter 노드 삭제 (올바른 라벨: karpenter.sh/nodepool)
+          echo "  6️⃣ Karpenter 노드 삭제..."
+          KARPENTER_NODES=$(kubectl get nodes -l karpenter.sh/nodepool -o name 2>/dev/null || true)
           if [ -n "$KARPENTER_NODES" ]; then
             echo "$KARPENTER_NODES" | while read node; do
               echo "    삭제 중: $node"
@@ -235,16 +248,27 @@ jobs:
             echo "    Karpenter 노드 없음"
           fi
 
-          # 6. EC2 인스턴스 강제 종료 (Karpenter 태그 기준)
-          echo "  6️⃣ Karpenter EC2 인스턴스 강제 종료..."
-          KARPENTER_INSTANCES=$(aws ec2 describe-instances \
+          # 7. EC2 인스턴스 종료 확인 (최대 2분 대기)
+          echo "  7️⃣ EC2 인스턴스 종료 확인..."
+          for i in {1..12}; do
+            REMAINING=$(aws ec2 describe-instances \
+              --filters "Name=tag:karpenter.sh/nodepool,Values=*" "Name=instance-state-name,Values=running,pending,stopping,shutting-down" \
+              --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+            if [ -z "$REMAINING" ]; then
+              echo "    ✅ 모든 Karpenter 인스턴스 종료 완료"
+              break
+            fi
+            echo "    대기 중... ($i/12) - 남은 인스턴스: $REMAINING"
+            sleep 10
+          done
+
+          # 8. 혹시 남은 인스턴스 한번 더 종료 시도
+          FINAL_CHECK=$(aws ec2 describe-instances \
             --filters "Name=tag:karpenter.sh/nodepool,Values=*" "Name=instance-state-name,Values=running,pending" \
             --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
-          if [ -n "$KARPENTER_INSTANCES" ]; then
-            echo "    종료할 인스턴스: $KARPENTER_INSTANCES"
-            aws ec2 terminate-instances --instance-ids $KARPENTER_INSTANCES 2>/dev/null || true
-          else
-            echo "    Karpenter EC2 인스턴스 없음"
+          if [ -n "$FINAL_CHECK" ]; then
+            echo "  ⚠️ 남은 인스턴스 재종료: $FINAL_CHECK"
+            aws ec2 terminate-instances --instance-ids $FINAL_CHECK 2>/dev/null || true
           fi
 
           echo "✅ Karpenter 정리 완료"

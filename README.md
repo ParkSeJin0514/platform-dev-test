@@ -419,7 +419,9 @@ Terraform destroy 실행 시 Kubernetes에서 생성한 ALB/Target Group이 남�
 
 | 리소스 | 정리 방법 |
 |--------|----------|
-| **Karpenter** | NodeClaim, NodePool, EC2NodeClass Finalizer 제거 후 삭제 |
+| **Karpenter EC2** | `karpenter.sh/nodepool` 태그 기준 EC2 강제 종료 (가장 먼저!) |
+| **Karpenter K8s** | NodePool, EC2NodeClass, NodeClaim Finalizer 제거 후 삭제 |
+| **Karpenter Node** | `karpenter.sh/nodepool` 라벨 기준 노드 삭제 |
 | **ArgoCD Applications** | Finalizer 제거 후 강제 삭제 |
 | **Ingress** | 모든 네임스페이스의 Ingress 삭제 |
 | **LoadBalancer Service** | LoadBalancer 타입 Service 삭제 |
@@ -429,22 +431,32 @@ Terraform destroy 실행 시 Kubernetes에서 생성한 ALB/Target Group이 남�
 ### 처리 흐름
 
 ```
-1. Karpenter 리소스 정리
+1. Karpenter EC2 인스턴스 강제 종료 (태그: karpenter.sh/nodepool)
        ↓
-2. ArgoCD Applications 정리
+2. Karpenter Controller 중지 (replicas=0)
        ↓
-3. Ingress & LoadBalancer Service 삭제
+3. NodePool, EC2NodeClass, NodeClaim 삭제
        ↓
-4. ALB 강제 삭제 (Listener 먼저 삭제)
+4. Karpenter 노드 삭제 (라벨: karpenter.sh/nodepool)
        ↓
-5. 30초 대기 (ALB 삭제 완료 대기)
+5. EC2 인스턴스 종료 확인 (최대 2분 대기)
        ↓
-6. 고아 Target Group 삭제
+6. 남은 인스턴스 재종료 시도
        ↓
-7. ALB 삭제 완료 확인 (최대 5분 대기)
+7. ArgoCD Applications 정리
        ↓
-8. Terraform Destroy 실행
+8. Ingress & LoadBalancer Service 삭제
+       ↓
+9. ALB 강제 삭제 (Listener 먼저 삭제)
+       ↓
+10. ALB 삭제 완료 확인 (최대 5분 대기)
+       ↓
+11. 고아 Target Group 삭제
+       ↓
+12. Terraform Destroy 실행
 ```
+
+> **중요**: Karpenter EC2 인스턴스를 가장 먼저 종료해야 Race Condition 방지
 
 ### 수동 정리 (필요시)
 
