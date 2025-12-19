@@ -44,24 +44,6 @@ variable "services_range_name" {
   default     = "services"
 }
 
-variable "enable_private_nodes" {
-  description = "Enable private nodes"
-  type        = bool
-  default     = true
-}
-
-variable "enable_private_endpoint" {
-  description = "Enable private endpoint (disable public access to master)"
-  type        = bool
-  default     = false
-}
-
-variable "master_ipv4_cidr" {
-  description = "CIDR block for master private endpoint"
-  type        = string
-  default     = "172.17.0.0/28"
-}
-
 variable "master_authorized_cidr" {
   description = "CIDR block authorized to access the master"
   type        = string
