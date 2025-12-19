@@ -482,32 +482,36 @@ Terraform destroy 실행 시 Kubernetes에서 생성한 ALB/Target Group이 남�
 ### 처리 흐름
 
 ```
-1. Karpenter EC2 인스턴스 강제 종료 (태그: karpenter.sh/nodepool)
+1. Karpenter Controller 중지 (replicas=0) ← 가장 먼저! 새 노드 생성 방지
        ↓
-2. Karpenter Controller 중지 (replicas=0)
+2. Controller 중지 대기 (Pod 종료 확인)
        ↓
-3. NodePool, EC2NodeClass, NodeClaim 삭제
+3. NodePool 삭제 (Controller 재시작해도 NodePool 없으면 생성 불가)
        ↓
-4. Karpenter 노드 삭제 (라벨: karpenter.sh/nodepool)
+4. EC2NodeClass, NodeClaim 삭제
        ↓
-5. EC2 인스턴스 종료 확인 (최대 2분 대기)
+5. Karpenter EC2 인스턴스 강제 종료 (Controller 중지 후 안전하게)
        ↓
-6. 남은 인스턴스 재종료 시도
+6. Karpenter 노드 삭제 (라벨: karpenter.sh/nodepool)
        ↓
-7. ArgoCD Applications 정리
+7. EC2 인스턴스 종료 확인 (최대 2분 대기)
        ↓
-8. Ingress & LoadBalancer Service 삭제
+8. 남은 인스턴스 재종료 시도
        ↓
-9. ALB 강제 삭제 (Listener 먼저 삭제)
+9. ArgoCD Applications 정리
        ↓
-10. ALB 삭제 완료 확인 (최대 5분 대기)
+10. Ingress & LoadBalancer Service 삭제
        ↓
-11. 고아 Target Group 삭제
+11. ALB 강제 삭제 (Listener 먼저 삭제)
        ↓
-12. Terraform Destroy 실행
+12. ALB 삭제 완료 확인 (최대 5분 대기)
+       ↓
+13. 고아 Target Group 삭제
+       ↓
+14. Terraform Destroy 실행
 ```
 
-> **중요**: Karpenter EC2 인스턴스를 가장 먼저 종료해야 Race Condition 방지
+> **중요**: Controller를 먼저 중지해야 EC2 종료 후 새 노드가 다시 생성되지 않음!
 
 ### 수동 정리 (필요시)
 

@@ -198,8 +198,50 @@ jobs:
         run: |
           echo "🧹 Karpenter 정리 시작..."
 
-          # 1. EC2 인스턴스 먼저 강제 종료 (Karpenter 태그 기준) - 가장 먼저!
-          echo "  1️⃣ Karpenter EC2 인스턴스 강제 종료..."
+          # ============================================================
+          # 핵심: Controller와 NodePool을 먼저 삭제해야 새 노드 생성 방지!
+          # 순서: Controller 중지 → NodePool 삭제 → EC2 종료
+          # ============================================================
+
+          # 1. Karpenter Controller 중지 (가장 먼저! 새 노드 생성 방지)
+          echo "  1️⃣ Karpenter Controller 중지..."
+          kubectl scale deployment karpenter -n kube-system --replicas=0 --timeout=60s 2>/dev/null || true
+
+          # Controller가 완전히 중지될 때까지 대기
+          echo "    Controller 중지 대기 중..."
+          for i in {1..6}; do
+            RUNNING_PODS=$(kubectl get pods -n kube-system -l app.kubernetes.io/name=karpenter --field-selector=status.phase=Running -o name 2>/dev/null | wc -l)
+            if [ "$RUNNING_PODS" -eq 0 ]; then
+              echo "    ✅ Controller 중지 완료"
+              break
+            fi
+            echo "    대기 중... ($i/6)"
+            sleep 5
+          done
+
+          # 2. NodePool 삭제 (새 노드 생성 방지 - Controller가 재시작해도 NodePool 없으면 생성 불가)
+          echo "  2️⃣ NodePool 삭제..."
+          kubectl get nodepools -o name 2>/dev/null | while read np; do
+            kubectl patch $np -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $np --force --grace-period=0 --timeout=30s 2>/dev/null || true
+          done
+
+          # 3. EC2NodeClass 삭제
+          echo "  3️⃣ EC2NodeClass 삭제..."
+          kubectl get ec2nodeclasses -o name 2>/dev/null | while read ec; do
+            kubectl patch $ec -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $ec --force --grace-period=0 --timeout=30s 2>/dev/null || true
+          done
+
+          # 4. NodeClaim Finalizer 제거 및 삭제
+          echo "  4️⃣ NodeClaim 삭제..."
+          kubectl get nodeclaims -o name 2>/dev/null | while read nc; do
+            kubectl patch $nc -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            kubectl delete $nc --force --grace-period=0 --timeout=30s 2>/dev/null || true
+          done
+
+          # 5. EC2 인스턴스 강제 종료 (Controller 중지 후 안전하게 종료)
+          echo "  5️⃣ Karpenter EC2 인스턴스 강제 종료..."
           KARPENTER_INSTANCES=$(aws ec2 describe-instances \
             --filters "Name=tag:karpenter.sh/nodepool,Values=*" "Name=instance-state-name,Values=running,pending,stopping" \
             --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
@@ -210,33 +252,7 @@ jobs:
             echo "    Karpenter EC2 인스턴스 없음"
           fi
 
-          # 2. Karpenter Controller 중지 (새 노드 생성 방지)
-          echo "  2️⃣ Karpenter Controller 중지..."
-          kubectl scale deployment karpenter -n kube-system --replicas=0 --timeout=60s 2>/dev/null || true
-          sleep 5
-
-          # 3. NodePool 삭제 (새 노드 생성 방지)
-          echo "  3️⃣ NodePool 삭제..."
-          kubectl get nodepools -o name 2>/dev/null | while read np; do
-            kubectl patch $np -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
-            kubectl delete $np --force --grace-period=0 --timeout=30s 2>/dev/null || true
-          done
-
-          # 4. EC2NodeClass 삭제
-          echo "  4️⃣ EC2NodeClass 삭제..."
-          kubectl get ec2nodeclasses -o name 2>/dev/null | while read ec; do
-            kubectl patch $ec -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
-            kubectl delete $ec --force --grace-period=0 --timeout=30s 2>/dev/null || true
-          done
-
-          # 5. NodeClaim Finalizer 제거 및 삭제
-          echo "  5️⃣ NodeClaim 삭제..."
-          kubectl get nodeclaims -o name 2>/dev/null | while read nc; do
-            kubectl patch $nc -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
-            kubectl delete $nc --force --grace-period=0 --timeout=30s 2>/dev/null || true
-          done
-
-          # 6. Karpenter 노드 삭제 (올바른 라벨: karpenter.sh/nodepool)
+          # 6. Karpenter 노드 삭제 (K8s에서 노드 객체 제거)
           echo "  6️⃣ Karpenter 노드 삭제..."
           KARPENTER_NODES=$(kubectl get nodes -l karpenter.sh/nodepool -o name 2>/dev/null || true)
           if [ -n "$KARPENTER_NODES" ]; then
