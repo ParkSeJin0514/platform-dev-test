@@ -456,6 +456,35 @@ jobs:
 
           echo "✅ Ingress 및 LoadBalancer 정리 완료"
 
+      - name: Cleanup VPC Peering (Cloud SQL Private Service Connection)
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          echo "🧹 VPC Peering 정리 시작..."
+
+          # petclinic 관련 VPC 목록 조회
+          VPCS=$(gcloud compute networks list --filter="name~petclinic" --format="value(name)" 2>/dev/null || true)
+
+          for vpc in $VPCS; do
+            echo "  VPC: $vpc"
+
+            # VPC Peering 삭제
+            PEERINGS=$(gcloud compute networks peerings list --network=$vpc --format="value(name)" 2>/dev/null || true)
+            for peering in $PEERINGS; do
+              echo "    Peering 삭제: $peering"
+              gcloud compute networks peerings delete $peering --network=$vpc --quiet 2>/dev/null || true
+            done
+
+            # VPC에 연결된 Route 삭제 (default route 포함)
+            ROUTES=$(gcloud compute routes list --filter="network:$vpc" --format="value(name)" 2>/dev/null || true)
+            for route in $ROUTES; do
+              echo "    Route 삭제: $route"
+              gcloud compute routes delete $route --quiet 2>/dev/null || true
+            done
+          done
+
+          echo "✅ VPC Peering 및 Route 정리 완료"
+
       - name: Pre-Cleanup Complete
         run: echo "✅ GCP Pre-Cleanup 완료"
 
