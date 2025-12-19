@@ -22,6 +22,14 @@ resource "google_container_cluster" "standard" {
   remove_default_node_pool = true
   initial_node_count       = 1
 
+  # 초기 노드 설정 (default SA 대신 커스텀 SA 사용)
+  node_config {
+    service_account = data.google_service_account.gke_cluster_sa.email
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+  }
+
   # 네트워크 설정
   network    = var.network_id
   subnetwork = var.subnetwork_id
