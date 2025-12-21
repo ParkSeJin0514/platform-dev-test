@@ -563,31 +563,37 @@ GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남
        ↓
 2. Ingress & LoadBalancer Service 삭제
        ↓
-3. GKE 방화벽 규칙 삭제 (k8s-fw-*)
+3. Forwarding Rules 삭제 (LB 최상위 리소스)
        ↓
-4. Network Endpoint Groups 삭제 (모든 zone)
+4. Target HTTP/HTTPS Proxies 삭제
        ↓
-5. Backend Services 삭제
+5. URL Maps 삭제
        ↓
-6. URL Maps, Target HTTP Proxies 삭제
+6. Backend Services 삭제 (NEG 참조 해제)
        ↓
-7. Forwarding Rules, Health Checks 삭제
+7. Health Checks 삭제
        ↓
-8. Cloud SQL 인스턴스 삭제 (VPC Peering 삭제 전 필수!)
+8. Network Endpoint Groups 삭제 (모든 zone)
        ↓
-9. 방화벽 규칙 최종 정리 (VPC에 연결된 모든 규칙 재확인)
+9. GKE 방화벽 규칙 삭제 (k8s-fw-*)
        ↓
-10. Service Networking Connection 삭제
+10. Cloud SQL 인스턴스 삭제 (VPC Peering 삭제 전 필수!)
        ↓
-11. VPC Peering 삭제
+11. 방화벽 규칙 최종 정리 (VPC에 연결된 모든 규칙 재확인)
        ↓
-12. Routes 삭제
+12. Service Networking Connection 삭제
        ↓
-13. Global Address 삭제 (Cloud SQL Private IP)
+13. VPC Peering 삭제
        ↓
-14. Terraform Destroy 실행
+14. Routes 삭제
+       ↓
+15. Global Address 삭제 (Cloud SQL Private IP)
+       ↓
+16. Terraform Destroy 실행
 ```
 
+> **중요**: GKE Ingress 리소스는 **역순으로 삭제**해야 합니다. NEG는 Backend Service에 연결되어 있어 Backend Service를 먼저 삭제해야 NEG 삭제가 가능합니다.
+>
 > **Note**: 방화벽 규칙 `k8s-fw-l7--*`는 GKE Ingress가 생성하는 L7 로드밸런서 방화벽 규칙입니다. Ingress 삭제 후에도 남아있을 수 있어 VPC 삭제 전에 한번 더 확인합니다.
 
 ### 수동 정리 (필요시)
