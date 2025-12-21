@@ -11,8 +11,8 @@ AWS Primary + GCP DR 환경을 위한 Terraform/Terragrunt IaC 코드
 │         AWS (Primary)           │          GCP (DR/Secondary)       │
 ├─────────────────────────────────┼───────────────────────────────────┤
 │  VPC (10.0.0.0/16)              │  VPC (172.16.0.0/16)              │
-│  EKS + Managed Node Group       │  GKE Autopilot                    │
-│  Karpenter (Auto Scaling)       │  Cluster Autoscaler               │
+│  EKS + Managed Node Group       │  GKE Standard + Node Pool         │
+│  Karpenter (Auto Scaling)       │  Node Pool Autoscaling            │
 │  ALB Controller                 │  GKE Ingress (GCE)                │
 │  EFS CSI Driver                 │  -                                │
 │  External Secrets (AWS SM)      │  External Secrets (GCP SM)        │
@@ -44,12 +44,12 @@ platform-dev-last/
 │   ├── terragrunt.hcl           # Root Terragrunt (GCS Backend)
 │   ├── env.hcl                  # GCP 환경 변수
 │   ├── foundation/              # VPC, Subnet, Cloud NAT
-│   ├── compute/                 # GKE Autopilot, Cloud SQL, VMs
+│   ├── compute/                 # GKE Standard + Node Pool, Cloud SQL, VMs
 │   ├── bootstrap/               # ArgoCD
 │   └── modules/
 │       ├── network/
 │       ├── foundation/
-│       ├── gke/
+│       ├── gke/                 # GKE Standard + Node Pool + Node SA
 │       ├── cloudsql/
 │       ├── vm/
 │       ├── compute/
@@ -376,15 +376,15 @@ cd ../bootstrap && terragrunt apply
 | Layer | 설명 | AWS 리소스 | GCP 리소스 |
 |-------|------|-----------|-----------|
 | **Foundation** | 네트워크 인프라 | VPC, Subnet, NAT Gateway | VPC, Subnet, Cloud NAT |
-| **Compute** | 컴퓨팅 리소스 | EKS, RDS, IAM Roles | GKE Autopilot, Cloud SQL, VMs |
+| **Compute** | 컴퓨팅 리소스 | EKS, RDS, IAM Roles | GKE Standard + Node Pool, Cloud SQL, VMs |
 | **Bootstrap** | GitOps 설정 | ArgoCD | ArgoCD |
 
 ## ☁️ 주요 차이점 (AWS vs GCP)
 
 | 항목 | AWS | GCP |
 |------|-----|-----|
-| Kubernetes | EKS + Managed Node | GKE Autopilot |
-| Auto Scaling | Karpenter | Cluster Autoscaler |
+| Kubernetes | EKS + Managed Node | GKE Standard + Node Pool |
+| Auto Scaling | Karpenter | Node Pool Autoscaling (min/max) |
 | Load Balancer | ALB Controller | GKE Ingress |
 | Storage | EFS CSI Driver | - |
 | IAM | IRSA | Workload Identity |
@@ -581,13 +581,31 @@ ssh gcp-mgmt
 kubectl get pods -A
 ```
 
-### GKE Autopilot (Public Cluster)
-- Google 관리형 노드 (자동 프로비저닝)
-- Pod 단위 과금 (사용한 만큼만 지불)
-- 자동 스케일링 및 노드 관리
+### GKE Standard + Node Pool
+- **Standard 모드**: 노드풀 직접 관리 (Autopilot 대신)
+- 노드용 Service Account 자동 생성 (`{cluster-name}-nodes`)
+- 오토스케일링: `min_node_count` ~ `max_node_count` 설정
+- 자동 복구/업그레이드: `auto_repair = true`, `auto_upgrade = true`
 - **Public Cluster 모드**: `enable_private_nodes = false`
   - Compute Engine 기본 SA 삭제로 인해 Private Cluster 사용 불가
   - 방화벽으로 보안 제어
+
+### GKE Node Pool 설정 (env.hcl)
+```hcl
+gke_mode          = "standard"      # standard or autopilot
+node_machine_type = "e2-standard-4" # 노드 머신 타입
+node_count        = 1               # 초기 노드 수 (존당)
+min_node_count    = 1               # 오토스케일링 최소
+max_node_count    = 2               # 오토스케일링 최대
+```
+
+### Node Service Account 권한
+| 권한 | 역할 |
+|------|------|
+| `roles/logging.logWriter` | Cloud Logging 쓰기 |
+| `roles/monitoring.metricWriter` | Cloud Monitoring 메트릭 쓰기 |
+| `roles/stackdriver.resourceMetadata.writer` | Stackdriver 메타데이터 |
+| `roles/artifactregistry.reader` | Artifact Registry 이미지 Pull |
 
 ### Cloud SQL Private Access
 - Private Service Connection 사용

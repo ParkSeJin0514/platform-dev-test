@@ -1,5 +1,5 @@
 # ============================================================================
-# Compute Layer (GCP) - GKE Autopilot, Workload Identity
+# Compute Layer (GCP) - GKE Standard + Node Pool, Workload Identity
 # ============================================================================
 # 의존성: Foundation (VPC, Subnet)
 # 출력값: cluster_endpoint, Workload Identity → Bootstrap에서 사용
@@ -53,10 +53,16 @@ inputs = {
   pods_range_name     = dependency.foundation.outputs.pods_secondary_range_name
   services_range_name = dependency.foundation.outputs.services_secondary_range_name
 
-  # GKE Autopilot 설정
+  # GKE Standard 설정
   gke_cluster_name           = local.env.locals.gke_cluster_name
   gke_release_channel        = local.env.locals.gke_release_channel
   gke_master_authorized_cidr = local.env.locals.gke_master_authorized_cidr
+
+  # GKE Node Pool 설정 (Standard 모드)
+  node_machine_type = local.env.locals.node_machine_type
+  node_count        = local.env.locals.node_count
+  min_node_count    = local.env.locals.min_node_count
+  max_node_count    = local.env.locals.max_node_count
 
   # Workload Identity 설정
   external_secrets_sa_name = local.env.locals.external_secrets_sa_name

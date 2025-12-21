@@ -46,7 +46,7 @@ variable "services_range_name" {
 }
 
 # ============================================================================
-# GKE Autopilot 설정
+# GKE Standard 설정
 # ============================================================================
 variable "gke_cluster_name" {
   description = "GKE cluster name"
@@ -63,6 +63,33 @@ variable "gke_master_authorized_cidr" {
   description = "CIDR block authorized to access the master"
   type        = string
   default     = "0.0.0.0/0"
+}
+
+# ============================================================================
+# GKE Node Pool 설정 (Standard 모드용)
+# ============================================================================
+variable "node_machine_type" {
+  description = "Machine type for GKE nodes"
+  type        = string
+  default     = "e2-standard-4"
+}
+
+variable "node_count" {
+  description = "Initial node count per zone"
+  type        = number
+  default     = 1
+}
+
+variable "min_node_count" {
+  description = "Minimum node count for autoscaling per zone"
+  type        = number
+  default     = 1
+}
+
+variable "max_node_count" {
+  description = "Maximum node count for autoscaling per zone"
+  type        = number
+  default     = 2
 }
 
 # ============================================================================

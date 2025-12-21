@@ -1,7 +1,7 @@
 # ============================================================================
 # Compute Module - main.tf (GCP)
 # ============================================================================
-# GKE Autopilot + Workload Identity + Cloud SQL
+# GKE Standard + Node Pool + Workload Identity + Cloud SQL
 # ============================================================================
 
 # ============================================================================
@@ -25,6 +25,12 @@ module "gke" {
   release_channel        = var.gke_release_channel
 
   external_secrets_sa_name = var.external_secrets_sa_name
+
+  # Node Pool 설정 (Standard 모드)
+  node_machine_type = var.node_machine_type
+  node_count        = var.node_count
+  min_node_count    = var.min_node_count
+  max_node_count    = var.max_node_count
 }
 
 # ============================================================================

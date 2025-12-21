@@ -26,13 +26,22 @@ locals {
   vpc_cidr = "172.16.0.0/16"
 
   # =========================================================================
-  # GKE Autopilot 설정 (Compute)
+  # GKE Standard 설정 (Compute)
   # =========================================================================
   gke_cluster_name    = "petclinic-dr-gke"
-  gke_release_channel = "REGULAR"  # RAPID, REGULAR, STABLE 중 선택
+  gke_mode            = "standard"  # standard or autopilot
+  gke_release_channel = "REGULAR"   # RAPID, REGULAR, STABLE 중 선택
 
   # Master Authorized Networks (GitHub Actions 등에서 접근)
   gke_master_authorized_cidr = "0.0.0.0/0"
+
+  # =========================================================================
+  # GKE Node Pool 설정 (Standard 모드용)
+  # =========================================================================
+  node_machine_type = "e2-standard-4"
+  node_count        = 1   # 초기 노드 수 (리전 클러스터: 존당 노드 수)
+  min_node_count    = 1   # 오토스케일링 최소
+  max_node_count    = 2   # 오토스케일링 최대
 
   # =========================================================================
   # ArgoCD 설정 (Bootstrap)

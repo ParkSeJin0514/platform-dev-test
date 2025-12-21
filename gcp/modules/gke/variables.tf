@@ -61,3 +61,30 @@ variable "external_secrets_sa_name" {
   type        = string
   default     = "petclinic-dr-external-secrets"
 }
+
+# ============================================================================
+# Node Pool 설정 (Standard 모드용)
+# ============================================================================
+variable "node_machine_type" {
+  description = "Machine type for GKE nodes"
+  type        = string
+  default     = "e2-standard-4"
+}
+
+variable "node_count" {
+  description = "Initial node count per zone"
+  type        = number
+  default     = 1
+}
+
+variable "min_node_count" {
+  description = "Minimum node count for autoscaling per zone"
+  type        = number
+  default     = 1
+}
+
+variable "max_node_count" {
+  description = "Maximum node count for autoscaling per zone"
+  type        = number
+  default     = 2
+}
