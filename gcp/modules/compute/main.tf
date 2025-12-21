@@ -98,6 +98,9 @@ module "vm" {
   # GKE cluster info for auto-configuration
   gke_cluster_name   = var.gke_cluster_name
   gke_cluster_region = var.region
+
+  # VM이 GKE 클러스터 생성 완료 후 시작되도록 의존성 추가
+  depends_on = [module.gke]
 }
 
 data "google_service_account" "gke_cluster_sa" {

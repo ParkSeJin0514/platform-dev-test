@@ -644,12 +644,27 @@ GCP Management VM 생성 시 자동으로 설치/설정되는 항목:
 - **kubectl** + **gke-gcloud-auth-plugin**: GKE 클러스터 접근
 - **Docker**: 컨테이너 관리
 - **mysql-client**: Cloud SQL 접속
-- **GKE 자동 인증**: VM 생성 시 자동으로 `kubectl` 설정 완료
+- **GKE 자동 인증**: VM이 GKE 생성 완료 후 자동으로 `kubectl` 설정
+
+> **Note**: VM은 GKE 클러스터 생성 완료 후에 생성되며, startup script에서 GKE RUNNING 상태를 확인 후 kubectl을 자동 설정합니다.
 
 ```bash
 # Management VM 접속 후 바로 사용 가능
 ssh gcp-mgmt
 kubectl get pods -A
+
+# kubectl 설정이 안 된 경우 수동 실행
+./configure-kubectl.sh
+
+# 또는 직접 실행
+export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+gcloud container clusters get-credentials petclinic-dr-gke --region asia-northeast3 --project kdt2-final-project-t1
+```
+
+### startup script 로그 확인
+```bash
+# VM에서 startup script 실행 로그 확인
+sudo cat /var/log/startup-script.log
 ```
 
 ### GKE Standard + Node Pool

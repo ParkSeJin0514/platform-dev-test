@@ -122,9 +122,14 @@ resource "google_compute_instance" "mgmt" {
     GKE_REGION="${var.gke_cluster_region}"
     PROJECT_ID="${var.project_id}"
 
+    # Log file for debugging
+    LOG_FILE="/var/log/startup-script.log"
+    exec > >(tee -a $LOG_FILE) 2>&1
+    echo "=== Startup script started at $(date) ==="
+
     # Install prerequisites
     apt-get update
-    apt-get install -y apt-transport-https ca-certificates gnupg curl mysql-client
+    apt-get install -y apt-transport-https ca-certificates gnupg curl mysql-client jq
 
     # Add Google Cloud SDK repo
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
@@ -149,11 +154,33 @@ resource "google_compute_instance" "mgmt" {
     mkdir -p /home/$SSH_USER/.kube
     chown $SSH_USER:$SSH_USER /home/$SSH_USER/.kube
 
-    # Add environment variable to bashrc for GKE auth plugin
-    echo 'export USE_GKE_GCLOUD_AUTH_PLUGIN=True' >> /home/$SSH_USER/.bashrc
+    # Add environment variable to bashrc for GKE auth plugin (avoid duplicates)
+    grep -q 'USE_GKE_GCLOUD_AUTH_PLUGIN' /home/$SSH_USER/.bashrc || echo 'export USE_GKE_GCLOUD_AUTH_PLUGIN=True' >> /home/$SSH_USER/.bashrc
 
-    # Configure GKE cluster credentials (run as the user with proper environment)
-    su - $SSH_USER -c "export USE_GKE_GCLOUD_AUTH_PLUGIN=True && gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION --project $PROJECT_ID"
+    # Wait for GKE cluster to be RUNNING (max 5 minutes)
+    echo "Waiting for GKE cluster $GKE_CLUSTER to be ready..."
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+    CLUSTER_STATUS="NOT_FOUND"
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+      CLUSTER_STATUS=$(gcloud container clusters describe $GKE_CLUSTER --region $GKE_REGION --project $PROJECT_ID --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
+      if [ "$CLUSTER_STATUS" = "RUNNING" ]; then
+        echo "GKE cluster is RUNNING!"
+        break
+      fi
+      echo "Cluster status: $CLUSTER_STATUS. Waiting... ($RETRY_COUNT/$MAX_RETRIES)"
+      RETRY_COUNT=$((RETRY_COUNT + 1))
+      sleep 10
+    done
+
+    if [ "$CLUSTER_STATUS" = "RUNNING" ]; then
+      # Configure GKE cluster credentials
+      echo "Configuring kubectl for user $SSH_USER..."
+      su - $SSH_USER -c "export USE_GKE_GCLOUD_AUTH_PLUGIN=True && gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION --project $PROJECT_ID" && echo "kubectl configured successfully!" || echo "WARNING: Failed to configure kubectl"
+    else
+      echo "WARNING: GKE cluster not ready after waiting. Run ~/configure-kubectl.sh manually."
+    fi
 
     # Create a script for manual re-configuration if needed
     cat > /home/$SSH_USER/configure-kubectl.sh << 'SCRIPT'
@@ -161,9 +188,12 @@ resource "google_compute_instance" "mgmt" {
 export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 gcloud container clusters get-credentials ${var.gke_cluster_name} --region ${var.gke_cluster_region} --project ${var.project_id}
 echo "kubectl configured for GKE cluster: ${var.gke_cluster_name}"
+kubectl get nodes
 SCRIPT
     chmod +x /home/$SSH_USER/configure-kubectl.sh
     chown $SSH_USER:$SSH_USER /home/$SSH_USER/configure-kubectl.sh
+
+    echo "=== Startup script completed at $(date) ==="
   EOF
 
   labels = {
