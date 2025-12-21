@@ -529,6 +529,77 @@ aws elbv2 delete-load-balancer --load-balancer-arn <ALB_ARN>
 aws elbv2 delete-target-group --target-group-arn <TG_ARN>
 ```
 
+## 🧹 GCP Terraform Destroy - GKE Ingress 리소스 정리
+
+GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남아있으면 VPC 삭제가 실패합니다.
+이를 해결하기 위해 **Pre-Cleanup** 단계에서 자동으로 정리합니다.
+
+### 자동 정리 대상
+
+| 리소스 | 정리 방법 | 필요 이유 |
+|--------|----------|----------|
+| **ArgoCD Applications** | Finalizer 제거 후 강제 삭제 | Application 정리 |
+| **Ingress** | Finalizer 제거 후 강제 삭제 | GKE Ingress 리소스 정리 시작 |
+| **LoadBalancer Service** | Service 삭제 | 외부 LB 정리 |
+| **Firewall Rules** | `k8s-fw-*` 패턴 삭제 | VPC 삭제 차단 방지 |
+| **NEG** | 모든 zone의 Network Endpoint Groups 삭제 | VPC 삭제 차단 방지 |
+| **Backend Services** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **URL Maps** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **Target HTTP Proxies** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **Forwarding Rules** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **Health Checks** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **VPC Peering** | Cloud SQL Private Connection 삭제 | VPC 삭제 차단 방지 |
+| **Global Address** | `petclinic-*` 패턴 삭제 | VPC 삭제 차단 방지 |
+| **Routes** | VPC 관련 Route 삭제 | VPC 삭제 차단 방지 |
+
+### 처리 흐름
+
+```
+1. ArgoCD Applications 정리 (Finalizer 제거)
+       ↓
+2. Ingress & LoadBalancer Service 삭제
+       ↓
+3. GKE 방화벽 규칙 삭제 (k8s-fw-*)
+       ↓
+4. Network Endpoint Groups 삭제 (모든 zone)
+       ↓
+5. Backend Services 삭제
+       ↓
+6. URL Maps, Target HTTP Proxies 삭제
+       ↓
+7. Forwarding Rules, Health Checks 삭제
+       ↓
+8. VPC Peering 삭제 (Cloud SQL Private Connection)
+       ↓
+9. Routes 삭제
+       ↓
+10. Global Address 삭제 (Cloud SQL Private IP)
+       ↓
+11. Terraform Destroy 실행
+```
+
+### 수동 정리 (필요시)
+
+```bash
+# 방화벽 규칙 확인
+gcloud compute firewall-rules list --filter="name~k8s" --format="table(name,network)"
+
+# NEG 확인 (각 zone별)
+gcloud compute network-endpoint-groups list --format="table(name,zone)"
+
+# Global Address 확인
+gcloud compute addresses list --global --format="table(name,address)"
+
+# VPC Peering 확인
+gcloud compute networks peerings list --network=petclinic-dr-vpc
+
+# 수동 삭제 예시
+gcloud compute firewall-rules delete <FW_NAME> --quiet
+gcloud compute network-endpoint-groups delete <NEG_NAME> --zone=<ZONE> --quiet
+gcloud compute addresses delete <ADDR_NAME> --global --quiet
+gcloud compute networks peerings delete <PEERING_NAME> --network=<VPC_NAME> --quiet
+```
+
 ## 🖥️ VM 접속 (SSH)
 
 ```bash
