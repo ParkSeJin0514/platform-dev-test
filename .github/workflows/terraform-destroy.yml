@@ -515,6 +515,35 @@ jobs:
 
           echo "✅ GKE Ingress 리소스 정리 완료"
 
+      - name: Delete Cloud SQL Instance (Must be deleted before VPC Peering)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "🧹 Cloud SQL 인스턴스 삭제 (VPC Peering 삭제 전 필수)..."
+
+          # Cloud SQL 인스턴스 목록 조회 및 삭제
+          for instance in $(gcloud sql instances list --filter="name~petclinic" --format="value(name)" 2>/dev/null); do
+            echo "  Cloud SQL 삭제: $instance"
+            # deletion protection 해제
+            gcloud sql instances patch "$instance" --no-deletion-protection --quiet 2>/dev/null || true
+            # 인스턴스 삭제
+            gcloud sql instances delete "$instance" --quiet 2>/dev/null || true
+          done
+
+          # Cloud SQL 삭제 대기 (최대 3분)
+          echo "  Cloud SQL 삭제 대기..."
+          for i in {1..18}; do
+            REMAINING=$(gcloud sql instances list --filter="name~petclinic" --format="value(name)" 2>/dev/null | wc -l)
+            if [ "$REMAINING" -eq 0 ]; then
+              echo "  ✅ Cloud SQL 삭제 완료"
+              break
+            fi
+            echo "    대기 중... ($i/18)"
+            sleep 10
+          done
+
+          echo "✅ Cloud SQL 정리 완료"
+
       - name: Cleanup VPC Resources (Peering, Routes, Addresses)
         continue-on-error: true
         timeout-minutes: 3
@@ -527,14 +556,21 @@ jobs:
           for vpc in $VPCS; do
             echo "  VPC: $vpc"
 
-            # 1. VPC Peering 삭제
+            # 1. Service Networking Connection 삭제 (Cloud SQL Private Service Connection)
+            echo "    Service Networking Connection 삭제..."
+            gcloud services vpc-peerings delete \
+              --service=servicenetworking.googleapis.com \
+              --network=$vpc \
+              --quiet 2>/dev/null || true
+
+            # 2. VPC Peering 삭제
             PEERINGS=$(gcloud compute networks peerings list --network=$vpc --format="value(name)" 2>/dev/null || true)
             for peering in $PEERINGS; do
               echo "    Peering 삭제: $peering"
               gcloud compute networks peerings delete $peering --network=$vpc --quiet 2>/dev/null || true
             done
 
-            # 2. VPC에 연결된 Route 삭제
+            # 3. VPC에 연결된 Route 삭제
             ROUTES=$(gcloud compute routes list --filter="network:$vpc" --format="value(name)" 2>/dev/null || true)
             for route in $ROUTES; do
               echo "    Route 삭제: $route"
@@ -542,7 +578,7 @@ jobs:
             done
           done
 
-          # 3. Global Address 삭제 (Cloud SQL Private IP 등)
+          # 4. Global Address 삭제 (Cloud SQL Private IP 등)
           echo "  Global Address 삭제..."
           for addr in $(gcloud compute addresses list --filter="name~petclinic" --format="value(name)" --global 2>/dev/null); do
             echo "    삭제: $addr"

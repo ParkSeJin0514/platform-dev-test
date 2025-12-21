@@ -548,9 +548,13 @@ GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남
 | **Target HTTP Proxies** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
 | **Forwarding Rules** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
 | **Health Checks** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
+| **Cloud SQL** | 인스턴스 삭제 (VPC Peering 삭제 전 필수) | Service Networking Connection 해제 |
+| **Service Networking** | `gcloud services vpc-peerings delete` | VPC 삭제 차단 방지 |
 | **VPC Peering** | Cloud SQL Private Connection 삭제 | VPC 삭제 차단 방지 |
 | **Global Address** | `petclinic-*` 패턴 삭제 | VPC 삭제 차단 방지 |
 | **Routes** | VPC 관련 Route 삭제 | VPC 삭제 차단 방지 |
+
+> **중요**: Cloud SQL이 Service Networking Connection을 사용 중이면 VPC Peering 삭제가 실패합니다. 반드시 **Cloud SQL을 먼저 삭제**해야 합니다.
 
 ### 처리 흐름
 
@@ -569,18 +573,30 @@ GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남
        ↓
 7. Forwarding Rules, Health Checks 삭제
        ↓
-8. VPC Peering 삭제 (Cloud SQL Private Connection)
+8. Cloud SQL 인스턴스 삭제 (VPC Peering 삭제 전 필수!)
        ↓
-9. Routes 삭제
+9. Service Networking Connection 삭제
        ↓
-10. Global Address 삭제 (Cloud SQL Private IP)
+10. VPC Peering 삭제
        ↓
-11. Terraform Destroy 실행
+11. Routes 삭제
+       ↓
+12. Global Address 삭제 (Cloud SQL Private IP)
+       ↓
+13. Terraform Destroy 실행
 ```
 
 ### 수동 정리 (필요시)
 
 ```bash
+# Cloud SQL 확인 및 삭제 (VPC Peering 삭제 전 필수!)
+gcloud sql instances list --filter="name~petclinic"
+gcloud sql instances patch <INSTANCE_NAME> --no-deletion-protection --quiet
+gcloud sql instances delete <INSTANCE_NAME> --quiet
+
+# Service Networking Connection 삭제
+gcloud services vpc-peerings delete --service=servicenetworking.googleapis.com --network=petclinic-dr-vpc --quiet
+
 # 방화벽 규칙 확인
 gcloud compute firewall-rules list --filter="name~k8s" --format="table(name,network)"
 
