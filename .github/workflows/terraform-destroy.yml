@@ -573,11 +573,44 @@ jobs:
 
           echo "✅ Cloud SQL 정리 완료"
 
-      - name: Final Cleanup - Firewall Rules (Before VPC deletion)
+      - name: Final Cleanup - NEG and Firewall (Before VPC deletion)
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
-          echo "🧹 VPC 삭제 전 방화벽 규칙 최종 정리..."
+          echo "🧹 VPC 삭제 전 NEG 및 방화벽 규칙 최종 정리..."
+
+          # ============================================================
+          # NEG 최종 정리 (GKE 삭제 후에도 남아있을 수 있음)
+          # ============================================================
+          echo "  1️⃣ 남은 NEG 최종 삭제..."
+          for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
+            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+              echo "    삭제: $neg (zone: $zone)"
+              gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
+            done
+          done
+
+          # NEG 삭제 확인 (최대 1분 대기)
+          echo "  ⏳ NEG 삭제 확인..."
+          for i in {1..6}; do
+            REMAINING=$(gcloud compute network-endpoint-groups list --format="value(name)" 2>/dev/null | wc -l)
+            if [ "$REMAINING" -eq 0 ]; then
+              echo "  ✅ 모든 NEG 삭제 완료"
+              break
+            fi
+            echo "    대기 중... ($i/6) - 남은 NEG: $REMAINING"
+            for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
+              for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+                gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
+              done
+            done
+            sleep 10
+          done
+
+          # ============================================================
+          # 방화벽 규칙 최종 정리
+          # ============================================================
+          echo "  2️⃣ 방화벽 규칙 최종 삭제..."
 
           # VPC 이름 조회
           VPCS=$(gcloud compute networks list --filter="name~petclinic" --format="value(name)" 2>/dev/null || true)
@@ -600,7 +633,7 @@ jobs:
           done
 
           # 방화벽 삭제 확인 대기 (최대 30초)
-          echo "  방화벽 삭제 확인..."
+          echo "  ⏳ 방화벽 삭제 확인..."
           for i in {1..6}; do
             REMAINING=$(gcloud compute firewall-rules list --filter="name~k8s OR network~petclinic" --format="value(name)" 2>/dev/null | wc -l)
             if [ "$REMAINING" -eq 0 ]; then
@@ -611,7 +644,7 @@ jobs:
             sleep 5
           done
 
-          echo "✅ 방화벽 규칙 최종 정리 완료"
+          echo "✅ NEG 및 방화벽 규칙 최종 정리 완료"
 
       - name: Cleanup VPC Resources (Peering, Routes, Addresses)
         continue-on-error: true
