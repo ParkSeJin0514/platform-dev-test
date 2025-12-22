@@ -517,8 +517,16 @@ jobs:
 
           # 6. Network Endpoint Groups (NEG) 삭제 - Backend Service 삭제 후에만 가능!
           echo "  6️⃣ Network Endpoint Groups 삭제..."
+          # k8s2로 시작하는 NEG (GKE Ingress가 생성한 NEG)
           for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
-            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND name~k8s2" --format="value(name)" 2>/dev/null); do
+              echo "    삭제: $neg (zone: $zone)"
+              gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
+            done
+          done
+          # 일반 NEG (petclinic 관련)
+          for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
+            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND name~petclinic" --format="value(name)" 2>/dev/null); do
               echo "    삭제: $neg (zone: $zone)"
               gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
             done
@@ -534,7 +542,7 @@ jobs:
           # NEG 삭제 확인 (최대 1분 대기)
           echo "  ⏳ NEG 삭제 확인..."
           for i in {1..6}; do
-            REMAINING=$(gcloud compute network-endpoint-groups list --format="value(name)" 2>/dev/null | wc -l)
+            REMAINING=$(gcloud compute network-endpoint-groups list --filter="name~k8s2 OR name~petclinic" --format="value(name)" 2>/dev/null | wc -l)
             if [ "$REMAINING" -eq 0 ]; then
               echo "  ✅ 모든 NEG 삭제 완료"
               break
@@ -542,7 +550,7 @@ jobs:
             echo "    대기 중... ($i/6) - 남은 NEG: $REMAINING"
             # 남은 NEG 재시도 삭제
             for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
-              for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+              for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND (name~k8s2 OR name~petclinic)" --format="value(name)" 2>/dev/null); do
                 gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
               done
             done
@@ -588,10 +596,19 @@ jobs:
 
           # ============================================================
           # NEG 최종 정리 (GKE 삭제 후에도 남아있을 수 있음)
+          # k8s2-um-*, k8s2-* 패턴: GKE Ingress가 생성한 NEG
           # ============================================================
           echo "  1️⃣ 남은 NEG 최종 삭제..."
+          # k8s2로 시작하는 NEG (GKE Ingress가 생성한 NEG - cluster-grafana-ingress 등)
           for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
-            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND name~k8s2" --format="value(name)" 2>/dev/null); do
+              echo "    삭제: $neg (zone: $zone)"
+              gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
+            done
+          done
+          # petclinic 관련 NEG
+          for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
+            for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND name~petclinic" --format="value(name)" 2>/dev/null); do
               echo "    삭제: $neg (zone: $zone)"
               gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
             done
@@ -600,14 +617,14 @@ jobs:
           # NEG 삭제 확인 (최대 1분 대기)
           echo "  ⏳ NEG 삭제 확인..."
           for i in {1..6}; do
-            REMAINING=$(gcloud compute network-endpoint-groups list --format="value(name)" 2>/dev/null | wc -l)
+            REMAINING=$(gcloud compute network-endpoint-groups list --filter="name~k8s2 OR name~petclinic" --format="value(name)" 2>/dev/null | wc -l)
             if [ "$REMAINING" -eq 0 ]; then
               echo "  ✅ 모든 NEG 삭제 완료"
               break
             fi
             echo "    대기 중... ($i/6) - 남은 NEG: $REMAINING"
             for zone in $(gcloud compute zones list --filter="region:${{ env.GCP_REGION }}" --format="value(name)" 2>/dev/null); do
-              for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone" --format="value(name)" 2>/dev/null); do
+              for neg in $(gcloud compute network-endpoint-groups list --filter="zone:$zone AND (name~k8s2 OR name~petclinic)" --format="value(name)" 2>/dev/null); do
                 gcloud compute network-endpoint-groups delete "$neg" --zone="$zone" --quiet 2>/dev/null || true
               done
             done
