@@ -120,6 +120,18 @@ resource "helm_release" "argocd" {
 }
 
 # ============================================================================
+# ArgoCD 초기화 대기
+# ============================================================================
+# ArgoCD Helm Release 후 Application Controller가 완전히 Ready 되기까지 대기
+# 이 대기 시간이 없으면 root-app 생성 시 Sync가 제대로 트리거되지 않음
+# ============================================================================
+resource "time_sleep" "wait_for_argocd" {
+  depends_on = [helm_release.argocd]
+
+  create_duration = "30s"
+}
+
+# ============================================================================
 # ArgoCD Root Application (App of Apps)
 # ============================================================================
 resource "kubectl_manifest" "root_application" {
@@ -148,7 +160,7 @@ resource "kubectl_manifest" "root_application" {
           - CreateNamespace=true
   YAML
 
-  depends_on = [helm_release.argocd]
+  depends_on = [time_sleep.wait_for_argocd]
 }
 
 # ============================================================================
