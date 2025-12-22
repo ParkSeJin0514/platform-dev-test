@@ -199,9 +199,16 @@ jobs:
           echo "🧹 Karpenter 정리 시작..."
 
           # ============================================================
-          # 핵심: Controller와 NodePool을 먼저 삭제해야 새 노드 생성 방지!
-          # 순서: Controller 중지 → NodePool 삭제 → EC2 종료
+          # 핵심: ArgoCD가 Karpenter를 복구하지 못하도록 먼저 비활성화!
+          # 순서: ArgoCD Sync 비활성화 → Controller 중지 → NodePool 삭제 → EC2 종료
           # ============================================================
+
+          # 0. ArgoCD Karpenter Application Auto-Sync 비활성화 (selfHeal 방지)
+          echo "  0️⃣ ArgoCD Karpenter Application Auto-Sync 비활성화..."
+          kubectl patch application karpenter -n argocd --type merge \
+            -p '{"spec":{"syncPolicy":null}}' 2>/dev/null || true
+          kubectl patch application karpenter-config -n argocd --type merge \
+            -p '{"spec":{"syncPolicy":null}}' 2>/dev/null || true
 
           # 1. Karpenter Controller 중지 (가장 먼저! 새 노드 생성 방지)
           echo "  1️⃣ Karpenter Controller 중지..."
