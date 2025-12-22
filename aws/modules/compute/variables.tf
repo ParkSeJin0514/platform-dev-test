@@ -255,3 +255,31 @@ variable "github_oidc_role_arn" {
   type        = string
   default     = "arn:aws:iam::946775837287:role/github-actions-terraform"
 }
+
+# ============================================================================
+# Monitoring 변수 (kube-prometheus-stack)
+# ============================================================================
+variable "monitoring_namespace" {
+  type        = string
+  description = "kube-prometheus-stack 설치 네임스페이스"
+  default     = "petclinic"
+}
+
+variable "kube_prometheus_stack_version" {
+  type        = string
+  description = "kube-prometheus-stack Helm chart 버전"
+  default     = "67.4.0"
+}
+
+variable "prometheus_retention" {
+  type        = string
+  description = "Prometheus 데이터 보존 기간"
+  default     = "7d"
+}
+
+variable "grafana_admin_password" {
+  type        = string
+  description = "Grafana 관리자 비밀번호"
+  default     = "admin"
+  sensitive   = true
+}

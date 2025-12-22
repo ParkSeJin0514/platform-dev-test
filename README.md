@@ -61,6 +61,43 @@ platform-dev-last/
     └── terraform-pr.yml         # PR 생성 시 Plan 실행
 ```
 
+## 📦 Provider & Chart 버전
+
+### Terraform Provider 버전
+
+| Provider | AWS | GCP | 비고 |
+|----------|-----|-----|------|
+| Terraform | `>= 1.0` | `>= 1.0` | |
+| AWS | `>= 6.24.0` | - | Regional NAT Gateway 지원 |
+| Google | - | `~> 5.0` | |
+| Google-beta | - | `~> 5.0` | |
+| Kubernetes | `~> 2.23` | `~> 2.23` | |
+| Helm | `~> 2.11` | `~> 2.11` | |
+| kubectl | `~> 1.14` | `~> 1.14` | |
+| TLS | `~> 4.0` | - | |
+
+### Helm Chart 버전 (platform-gitops-last)
+
+| Component | Chart Version | App Version |
+|-----------|---------------|-------------|
+| ALB Controller | `1.8.1` | `2.7.1` |
+| Karpenter | `1.1.1` | `1.1.1` |
+| External Secrets | `0.10.7` | `0.10.7` |
+| EFS CSI Driver | `3.0.8` | `2.0.0` |
+| Metrics Server | `3.12.0` | `0.7.0` |
+| ArgoCD | `5.51.6` | - |
+| kube-prometheus-stack | `67.4.0` | - |
+
+### 애플리케이션 버전
+
+| 항목 | 버전 |
+|------|------|
+| EKS | `1.31` |
+| MySQL (RDS/Cloud SQL) | `8.0` |
+| Spring Boot (petclinic-dev) | `3.4.1` |
+| Java | `17` |
+| Spring Cloud | `2024.0.0` |
+
 ## 📋 사전 요구사항
 
 ### AWS
@@ -375,9 +412,68 @@ cd ../bootstrap && terragrunt apply
 
 | Layer | 설명 | AWS 리소스 | GCP 리소스 |
 |-------|------|-----------|-----------|
-| **Foundation** | 네트워크 인프라 | VPC, Subnet, NAT Gateway | VPC, Subnet, Cloud NAT |
+| **Foundation** | 네트워크 인프라 | VPC, Subnet, Regional NAT Gateway | VPC, Subnet, Cloud NAT |
 | **Compute** | 컴퓨팅 리소스 | EKS, RDS, IAM Roles | GKE Standard + Node Pool, Cloud SQL, VMs |
 | **Bootstrap** | GitOps 설정 | ArgoCD | ArgoCD |
+
+## 🌐 Regional NAT Gateway (AWS)
+
+AWS Provider 6.24.0부터 지원되는 **Regional NAT Gateway**를 사용하여 비용 절감 및 관리 단순화를 구현했습니다.
+
+### 기존 방식 (Zonal) vs 새로운 방식 (Regional)
+
+| 항목 | Zonal (기존) | Regional (현재) |
+|------|-------------|-----------------|
+| NAT Gateway 개수 | AZ당 1개 (2개 AZ = 2개) | **1개** |
+| Elastic IP | AZ당 1개 | 자동 관리 (Auto Mode) |
+| Route Table | AZ별 Private RT | **단일 Private RT** |
+| 비용 | NAT Gateway × AZ 개수 | **NAT Gateway 1개** |
+| 고가용성 | 수동 구성 | **AWS 자동 관리** |
+
+### Terraform 설정 (aws/modules/network/main.tf)
+
+```hcl
+# Regional NAT Gateway (단일)
+resource "aws_nat_gateway" "regional" {
+  availability_mode = "regional"   # Regional 모드
+  vpc_id            = aws_vpc.main.id
+  connectivity_type = "public"
+
+  tags = { Name = "${var.project_name}-nat-regional" }
+  depends_on = [aws_internet_gateway.igw]
+}
+
+# Private Route Table (단일)
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.regional.id
+  }
+
+  tags = { Name = "${var.project_name}-rt-private" }
+}
+```
+
+### 장점
+
+1. **비용 절감**: 여러 AZ에 NAT Gateway를 개별 생성할 필요 없음
+2. **자동 확장**: 워크로드가 있는 AZ에 자동으로 확장
+3. **관리 단순화**: 단일 NAT Gateway, 단일 Route Table
+4. **고가용성**: AWS가 자동으로 AZ 커버리지 관리
+
+### 요구사항
+
+- **AWS Provider**: `>= 6.24.0`
+
+```hcl
+# aws/terragrunt.hcl
+aws = {
+  source  = "hashicorp/aws"
+  version = ">= 6.24.0"
+}
+```
 
 ## ☁️ 주요 차이점 (AWS vs GCP)
 
@@ -756,6 +852,74 @@ gcloud projects add-iam-policy-binding PROJECT_ID \
   --member="serviceAccount:gke-cluster-sa@PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader"
 ```
+
+## 📊 Cluster Monitoring (kube-prometheus-stack)
+
+Terraform으로 `kube-prometheus-stack`을 자동 배포하여 클러스터 전체 모니터링을 제공합니다.
+
+### 구성 요소
+
+| Component | 경로 | 설명 |
+|-----------|------|------|
+| Prometheus | `/prometheus` | 메트릭 수집 및 저장 |
+| Grafana | `/` | 대시보드 및 시각화 |
+| AlertManager | `/alertmanager` | 알림 관리 |
+| Node Exporter | - | 노드 메트릭 수집 |
+| Kube State Metrics | - | K8s 리소스 메트릭 |
+
+### Terraform 설정 (aws/modules/compute/monitoring.tf)
+
+```hcl
+resource "helm_release" "kube_prometheus_stack" {
+  name       = "kube-prometheus"
+  repository = "https://prometheus-community.github.io/helm-charts"
+  chart      = "kube-prometheus-stack"
+  namespace  = var.monitoring_namespace  # default: petclinic
+  version    = var.kube_prometheus_stack_version  # default: 67.4.0
+
+  # Prometheus 설정
+  set {
+    name  = "prometheus.prometheusSpec.routePrefix"
+    value = "/prometheus"
+  }
+
+  # AlertManager 설정
+  set {
+    name  = "alertmanager.alertmanagerSpec.routePrefix"
+    value = "/alertmanager"
+  }
+
+  # Grafana 설정
+  set {
+    name  = "grafana.adminPassword"
+    value = var.grafana_admin_password  # default: admin
+  }
+}
+```
+
+### 변수 (env.hcl에서 오버라이드 가능)
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `monitoring_namespace` | `petclinic` | 설치 네임스페이스 |
+| `kube_prometheus_stack_version` | `67.4.0` | Helm chart 버전 |
+| `prometheus_retention` | `7d` | 데이터 보존 기간 |
+| `grafana_admin_password` | `admin` | Grafana 관리자 비밀번호 |
+
+### EKS 최적화
+
+EKS에서 접근 불가능한 컴포넌트는 자동 비활성화:
+- `kubeEtcd.enabled = false`
+- `kubeControllerManager.enabled = false`
+- `kubeScheduler.enabled = false`
+- `kubeProxy.enabled = false`
+
+### 접속 URL
+
+배포 후 ALB를 통해 접속:
+- **Grafana**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/`
+- **Prometheus**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/prometheus`
+- **AlertManager**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/alertmanager`
 
 ## 🔗 관련 저장소
 

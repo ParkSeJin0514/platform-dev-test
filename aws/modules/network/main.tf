@@ -4,8 +4,13 @@
 # VPC와 관련된 모든 네트워크 리소스를 생성합니다.
 # - VPC, Internet Gateway
 # - Subnet (4종류 × AZ 개수)
-# - NAT Gateway (AZ당 1개)
-# - Route Table (Public 1개 + Private AZ별)
+# - NAT Gateway (Regional - 단일 NAT Gateway가 여러 AZ 자동 커버)
+# - Route Table (Public 1개 + Private 1개)
+#
+# Regional NAT Gateway (AWS Provider >= 6.24.0):
+#   - 단일 NAT Gateway가 워크로드가 있는 AZ에 자동 확장
+#   - 비용 절감: AZ별 NAT Gateway 개별 생성 불필요
+#   - 고가용성: AWS가 자동으로 AZ 커버리지 관리
 # ============================================================================
 
 # ============================================================================
@@ -149,31 +154,24 @@ resource "aws_subnet" "subnet" {
 }
 
 # ============================================================================
-# 4. NAT Gateway 및 Elastic IP
+# 4. NAT Gateway (Regional Mode)
 # ============================================================================
-# 각 AZ에 NAT Gateway를 배치하여 고가용성 확보
-# Private Subnet의 인스턴스가 인터넷에 접근할 때 사용
+# Regional NAT Gateway: 단일 NAT Gateway가 여러 AZ를 자동 커버
+# - Auto Mode: AWS가 자동으로 AZ 확장 및 EIP 할당
+# - 비용 절감: AZ당 NAT Gateway 개별 생성 불필요
+# - 고가용성: 워크로드가 있는 AZ에 자동 확장
+#
+# 참고: AWS Provider >= 6.24.0 필요
 # ============================================================================
 
-# NAT Gateway용 Elastic IP (AZ별)
-resource "aws_eip" "eip" {
-  for_each = toset(local.azs) # 리스트를 Set으로 변환
+# Regional NAT Gateway (단일)
+resource "aws_nat_gateway" "regional" {
+  # Regional 모드 설정
+  availability_mode = "regional"
+  vpc_id            = aws_vpc.main.id
+  connectivity_type = "public"
 
-  domain = "vpc"
-  tags   = { Name = "${var.project_name}-nat-eip-${substr(each.key, -1, 1)}" }
-}
-
-# NAT Gateway (AZ별)
-resource "aws_nat_gateway" "nat" {
-  for_each = toset(local.azs)
-
-  allocation_id = aws_eip.eip[each.key].id
-
-  # NAT Gateway는 반드시 Public(bastion) Subnet에 배치
-  # 키 변환: "ap-northeast-2a" → "bastion_2a"
-  subnet_id = aws_subnet.subnet["bastion_${substr(each.key, -2, 2)}"].id
-
-  tags = { Name = "${var.project_name}-nat-${substr(each.key, -1, 1)}" }
+  tags = { Name = "${var.project_name}-nat-regional" }
 
   # IGW가 먼저 생성되어야 NAT Gateway 생성 가능
   depends_on = [aws_internet_gateway.igw]
@@ -196,25 +194,24 @@ resource "aws_route_table" "public_rt" {
   tags = { Name = "${var.project_name}-rt-public" }
 }
 
-# Private Route Table (AZ별 생성)
-# 인터넷 트래픽을 해당 AZ의 NAT Gateway로 라우팅
+# Private Route Table (1개 - Regional NAT Gateway 사용)
+# 모든 Private Subnet에서 Regional NAT Gateway로 라우팅
 resource "aws_route_table" "private_rt" {
-  for_each = toset(local.azs)
-
   vpc_id = aws_vpc.main.id
 
   route {
-    cidr_block     = "0.0.0.0/0"                      # 모든 외부 트래픽
-    nat_gateway_id = aws_nat_gateway.nat[each.key].id # → 해당 AZ의 NAT로
+    cidr_block     = "0.0.0.0/0"                    # 모든 외부 트래픽
+    nat_gateway_id = aws_nat_gateway.regional.id   # → Regional NAT로
   }
 
-  tags = { Name = "${var.project_name}-rt-private-${substr(each.key, -1, 1)}" }
+  tags = { Name = "${var.project_name}-rt-private" }
 }
 
 # ============================================================================
 # 6. Route Table Association
 # ============================================================================
 # 각 서브넷을 적절한 Route Table에 연결
+# Regional NAT Gateway 사용으로 모든 Private Subnet은 단일 Private RT 사용
 # ============================================================================
 
 resource "aws_route_table_association" "rt_asso" {
@@ -224,6 +221,6 @@ resource "aws_route_table_association" "rt_asso" {
 
   # 삼항 연산자로 Public/Private 구분
   # Public(bastion) Subnet → Public RT
-  # Private Subnet → 해당 AZ의 Private RT
-  route_table_id = local.subnets[each.key].public ? aws_route_table.public_rt.id : aws_route_table.private_rt[each.value.availability_zone].id
+  # Private Subnet → 단일 Private RT (Regional NAT Gateway)
+  route_table_id = local.subnets[each.key].public ? aws_route_table.public_rt.id : aws_route_table.private_rt.id
 }

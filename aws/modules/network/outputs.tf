@@ -46,13 +46,11 @@ output "private_db_subnet_id" {
 }
 
 # ------------------------------------------------------------
-# NAT Gateway IDs (AZ별 Map)
+# NAT Gateway ID (Regional)
 # ------------------------------------------------------------
-output "nat_gateway_ids" {
-  description = "NAT Gateway IDs per AZ"
-  value = {
-    for az, gw in aws_nat_gateway.nat : az => gw.id
-  }
+output "nat_gateway_id" {
+  description = "Regional NAT Gateway ID"
+  value       = aws_nat_gateway.regional.id
 }
 
 # ------------------------------------------------------------
@@ -61,10 +59,8 @@ output "nat_gateway_ids" {
 output "route_table_ids" {
   description = "Public and private route table IDs"
   value = {
-    public = aws_route_table.public_rt.id
-    private = {
-      for az, rt in aws_route_table.private_rt : az => rt.id
-    }
+    public  = aws_route_table.public_rt.id
+    private = aws_route_table.private_rt.id
   }
 }
 
