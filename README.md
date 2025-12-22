@@ -706,7 +706,7 @@ GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남
 | **Ingress** | Finalizer 제거 후 강제 삭제 | GKE Ingress 리소스 정리 시작 |
 | **LoadBalancer Service** | Service 삭제 | 외부 LB 정리 |
 | **Firewall Rules** | `k8s-fw-*` 패턴 삭제 | VPC 삭제 차단 방지 |
-| **NEG** | 모든 zone의 Network Endpoint Groups 삭제 | VPC 삭제 차단 방지 |
+| **NEG** | `k8s1-*`, `k8s2-*`, `petclinic-*` 패턴 삭제 | VPC 삭제 차단 방지 |
 | **Backend Services** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
 | **URL Maps** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
 | **Target HTTP Proxies** | `k8s-*` 패턴 삭제 | LB 리소스 정리 |
@@ -737,7 +737,7 @@ GCP에서 Terraform destroy 실행 시 GKE Ingress가 생성한 리소스가 남
        ↓
 7. Health Checks 삭제
        ↓
-8. Network Endpoint Groups 삭제 (모든 zone)
+8. Network Endpoint Groups 삭제 (k8s1-*, k8s2-*, petclinic-* 패턴)
        ↓
 9. GKE 방화벽 규칙 삭제 (k8s-fw-*)
        ↓
@@ -838,8 +838,11 @@ GCP Management VM 생성 시 자동으로 설치/설정되는 항목:
 - **Docker**: 컨테이너 관리
 - **mysql-client**: Cloud SQL 접속
 - **GKE 자동 인증**: VM이 GKE 생성 완료 후 자동으로 `kubectl` 설정
+- **KUBECONFIG 환경변수**: `.bashrc` 및 `/etc/environment`에 자동 설정
 
 > **Note**: VM은 GKE 클러스터 생성 완료 후에 생성되며, startup script에서 GKE RUNNING 상태를 확인 후 kubectl을 자동 설정합니다.
+>
+> **KUBECONFIG 설정**: 모든 세션 타입(인터랙티브/비-인터랙티브)에서 kubectl이 작동하도록 환경변수가 자동 설정됩니다.
 
 ```bash
 # Management VM 접속 후 바로 사용 가능
@@ -851,6 +854,7 @@ kubectl get pods -A
 
 # 또는 직접 실행
 export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+export KUBECONFIG=/home/ubuntu/.kube/config
 gcloud container clusters get-credentials petclinic-dr-gke --region asia-northeast3 --project kdt2-final-project-t1
 ```
 
@@ -1013,6 +1017,33 @@ set {
 - **Grafana**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/`
 - **Prometheus**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/prometheus`
 - **AlertManager**: `http://cluster-monitoring-alb-xxx.ap-northeast-2.elb.amazonaws.com/alertmanager`
+
+## 🔐 ArgoCD 접속 정보
+
+Terraform Apply 완료 후 ArgoCD 초기 비밀번호를 확인하는 방법입니다.
+
+### Terraform Output
+
+GCP Compute 레이어 Apply 후 output에 ArgoCD 비밀번호 확인 명령어가 표시됩니다:
+
+```bash
+# Terraform Output 확인
+cd gcp/compute && terragrunt output
+
+# 출력 예시
+argocd_password_command = "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo"
+```
+
+### 비밀번호 확인
+
+```bash
+# Management VM에서 실행
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo
+
+# ArgoCD 접속
+# Username: admin
+# Password: (위 명령어 출력값)
+```
 
 ## 🔗 관련 저장소
 
