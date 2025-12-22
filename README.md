@@ -496,6 +496,74 @@ aws = {
 - **Database**: 각 클라우드 별도 DB (Cloud SQL)
 - **Failover**: Manual (ArgoCD를 통한 GitOps)
 
+## ⏱️ ArgoCD 초기화 타이밍 이슈 해결
+
+### 문제
+
+Terraform bootstrap 레이어에서 ArgoCD Helm 설치 직후 `root-app` Application을 생성하면, ArgoCD Application Controller가 아직 완전히 Ready 되지 않아 **Auto-Sync가 트리거되지 않는** 문제가 발생합니다.
+
+### 증상
+
+```bash
+kubectl get applications -n argocd
+NAME               SYNC STATUS   HEALTH STATUS
+argocd-ingress     OutOfSync     Missing      # Sync 안됨
+external-secrets   OutOfSync     Degraded
+karpenter          OutOfSync     Missing
+petclinic          OutOfSync     Degraded
+root-app           Synced        Healthy
+```
+
+### 해결책
+
+`time_sleep` 리소스를 사용하여 ArgoCD 초기화 완료를 대기합니다.
+
+```hcl
+# aws/modules/bootstrap/main.tf
+
+# ArgoCD 초기화 대기 (30초)
+resource "time_sleep" "wait_for_argocd" {
+  depends_on = [helm_release.argocd]
+  create_duration = "30s"
+}
+
+# Root Application - ArgoCD 초기화 완료 후 생성
+resource "kubectl_manifest" "root_application" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: root-app
+      namespace: argocd
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+  YAML
+
+  depends_on = [time_sleep.wait_for_argocd]
+}
+```
+
+### 수동 Sync (긴급 복구 시)
+
+ArgoCD Application이 OutOfSync 상태인 경우:
+
+```bash
+# 개별 Application Sync
+kubectl patch application argocd-ingress -n argocd --type merge \
+  -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{}}}'
+
+# 여러 Application 한번에
+for app in argocd-ingress external-secrets karpenter petclinic; do
+  kubectl patch application $app -n argocd --type merge \
+    -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{}}}'
+done
+```
+
+---
+
 ## ⏱️ Karpenter IAM 타이밍 이슈 해결
 
 ### 문제
@@ -913,6 +981,31 @@ EKS에서 접근 불가능한 컴포넌트는 자동 비활성화:
 - `kubeControllerManager.enabled = false`
 - `kubeScheduler.enabled = false`
 - `kubeProxy.enabled = false`
+
+### externalUrl 설정 주의사항
+
+**중요**: `externalUrl`에 스킴(http/https) 없이 경로만 설정하면 AlertManager/Prometheus가 CrashLoopBackOff 상태가 됩니다.
+
+```
+# 에러 메시지
+level=error msg="failed to determine external URL" err="\"/alertmanager\": invalid \"\" scheme, only 'http' and 'https' are supported"
+```
+
+**해결책**: ALB 주소를 미리 알 수 없으므로 `externalUrl`은 설정하지 않고 `routePrefix`만 사용합니다.
+
+```hcl
+# ❌ 잘못된 설정 (CrashLoopBackOff 발생)
+set {
+  name  = "alertmanager.alertmanagerSpec.externalUrl"
+  value = "/alertmanager"  # 스킴 없음 → 에러
+}
+
+# ✅ 올바른 설정 (routePrefix만 사용)
+set {
+  name  = "alertmanager.alertmanagerSpec.routePrefix"
+  value = "/alertmanager"
+}
+```
 
 ### 접속 URL
 
