@@ -909,6 +909,38 @@ max_node_count    = 2               # 오토스케일링 최대
 - `google_service_networking_connection.private_vpc_connection`: VPC Peering 생성
 - Apply 시 자동 생성, Destroy 시 Pre-Cleanup에서 강제 삭제
 
+### Cloud NAT 및 Default Internet Route
+
+GKE 노드가 Google API (Logging, GCS, GCR 등)에 접근하려면 Cloud NAT와 함께 **Default Internet Route**가 필요합니다.
+
+**필수 구성:**
+```
+┌─────────────────┐     Cloud NAT      ┌─────────────────┐
+│  GKE Node       │ ──────────────────► │  Internet       │
+│  (Private IP)   │  via NAT Gateway   │  (Google APIs)  │
+└─────────────────┘                    └─────────────────┘
+         │
+         │ Route: 0.0.0.0/0 → default-internet-gateway
+         ▼
+   Cloud Router + NAT
+```
+
+**Terraform 리소스 (network/main.tf):**
+- `google_compute_router`: Cloud NAT용 라우터
+- `google_compute_router_nat`: NAT Gateway
+- `google_compute_route.default_internet`: 인터넷 게이트웨이로의 기본 라우트
+
+> **중요**: `auto_create_subnetworks = false`로 VPC를 생성하면 default route가 자동 생성되지 않을 수 있습니다. 반드시 `0.0.0.0/0 → default-internet-gateway` route를 명시적으로 추가해야 합니다.
+
+**문제 증상 (Default Route 없을 때):**
+```
+Service    DNS      Reachable
+LOGGING    true     false
+GCS        true     false
+GCR        true     false
+```
+GKE 노드가 unhealthy 상태가 되며, 클러스터 생성이 실패합니다.
+
 ### Workload Identity
 ```yaml
 # GKE Service Account 연동
