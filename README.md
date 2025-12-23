@@ -957,6 +957,39 @@ gcloud projects add-iam-policy-binding PROJECT_ID \
   --role="roles/artifactregistry.reader"
 ```
 
+### Standalone NEG (고정 이름 NEG)
+
+GKE Ingress가 생성하는 NEG(Network Endpoint Group)는 기본적으로 자동 생성 이름(`k8s1-xxxx-namespace-service-port-xxxx`)을 사용합니다. 이로 인해 GKE를 재배포할 때마다 Backend Service를 수동으로 업데이트해야 하는 문제가 발생합니다.
+
+**Standalone NEG**를 사용하면 고정된 이름의 NEG를 생성하여 이 문제를 해결할 수 있습니다.
+
+**Service에 NEG annotation 추가 (petclinic-gitops/overlays/gcp/service-patch.yaml):**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  annotations:
+    cloud.google.com/backend-config: '{"default": "api-gateway-backend-config"}'
+    cloud.google.com/neg: '{"exposed_ports": {"8080":{"name": "petclinic-api-gateway-neg"}}}'
+```
+
+**장점:**
+- GKE 재배포 후에도 동일한 NEG 이름 유지 (`petclinic-api-gateway-neg`)
+- Backend Service 설정 변경 불필요
+- Load Balancer 구성이 GKE 생명주기와 분리됨
+
+**Load Balancer 체인:**
+```
+Forwarding Rule → Target HTTP Proxy → URL Map → Backend Service → NEG (petclinic-api-gateway-neg) → GKE Pod
+```
+
+**주의사항:**
+- NEG annotation은 Service에 적용되며, GKE가 자동으로 NEG를 생성/관리합니다
+- Backend Service는 GCP Console 또는 gcloud에서 수동으로 생성해야 합니다
+- destroy.yml 실행 시 NEG는 Pre-Cleanup에서 자동 정리됩니다
+
 ## 📊 Cluster Monitoring (kube-prometheus-stack)
 
 Terraform으로 `kube-prometheus-stack`을 자동 배포하여 클러스터 전체 모니터링을 제공합니다.
