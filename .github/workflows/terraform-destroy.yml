@@ -463,11 +463,15 @@ jobs:
 
           echo "✅ Ingress 및 LoadBalancer 정리 완료"
 
+          # GKE Ingress Controller가 LB 리소스를 정리할 시간 대기
+          echo "⏳ GKE Ingress Controller가 LB 리소스 정리 중... (60초 대기)"
+          sleep 60
+
       - name: Cleanup GKE Ingress Resources (LB Stack → Backend → NEG)
         continue-on-error: true
         timeout-minutes: 8
         run: |
-          echo "🧹 GKE Ingress 리소스 정리 시작..."
+          echo "🧹 GKE Ingress 리소스 정리 시작 (GKE Controller가 못 지운 잔여물 정리)..."
           echo "   삭제 순서: Forwarding Rules → Target Proxies → URL Maps → Backend Services → Health Checks → NEG → Firewall"
 
           # ============================================================
