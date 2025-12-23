@@ -336,29 +336,83 @@ jobs:
       - name: Force Delete ALB and Target Groups
         if: steps.configure-kubectl.outputs.cluster_exists == 'true'
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           echo "🧹 ALB 및 Target Group 강제 삭제..."
 
-          # petclinic 관련 ALB 강제 삭제
-          for alb_arn in $(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic') || contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd')].LoadBalancerArn" --output text 2>/dev/null); do
-            echo "  삭제 중: $alb_arn"
-            # Listener 먼저 삭제
-            for listener_arn in $(aws elbv2 describe-listeners --load-balancer-arn $alb_arn --query 'Listeners[*].ListenerArn' --output text 2>/dev/null); do
-              aws elbv2 delete-listener --listener-arn $listener_arn 2>/dev/null || true
+          # ============================================================
+          # 1단계: ALB 목록 조회 및 삭제
+          # ============================================================
+          echo "  1️⃣ ALB 목록 조회..."
+          ALB_ARNS=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic') || contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd')].LoadBalancerArn" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "$ALB_ARNS" ]; then
+            echo "  삭제할 ALB 없음"
+          else
+            for alb_arn in $ALB_ARNS; do
+              ALB_NAME=$(aws elbv2 describe-load-balancers --load-balancer-arns $alb_arn --query 'LoadBalancers[0].LoadBalancerName' --output text 2>/dev/null || echo "unknown")
+              echo "  삭제 중: $ALB_NAME ($alb_arn)"
+
+              # Listener 먼저 삭제
+              for listener_arn in $(aws elbv2 describe-listeners --load-balancer-arn $alb_arn --query 'Listeners[*].ListenerArn' --output text 2>/dev/null); do
+                echo "    Listener 삭제: $listener_arn"
+                aws elbv2 delete-listener --listener-arn $listener_arn 2>/dev/null || true
+              done
+
+              # ALB 삭제
+              aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn 2>/dev/null || true
             done
-            # ALB 삭제
-            aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn 2>/dev/null || true
+          fi
+
+          # ============================================================
+          # 2단계: ALB 완전 삭제 대기 (deleting 상태 포함)
+          # ============================================================
+          echo "  2️⃣ ALB 완전 삭제 대기..."
+          for i in {1..36}; do
+            # 모든 상태의 ALB 확인 (active, provisioning, deleting 등)
+            REMAINING_ALBS=$(aws elbv2 describe-load-balancers \
+              --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic') || contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd')].[LoadBalancerName,State.Code]" \
+              --output text 2>/dev/null || true)
+
+            if [ -z "$REMAINING_ALBS" ]; then
+              echo "  ✅ 모든 ALB 삭제 완료"
+              break
+            fi
+
+            echo "    대기 중... ($i/36)"
+            echo "$REMAINING_ALBS" | while read name state; do
+              echo "      - $name: $state"
+            done
+            sleep 5
           done
 
-          echo "⏳ ALB 삭제 대기 (30초)..."
-          sleep 30
+          # ============================================================
+          # 3단계: Target Group 삭제 (ALB 삭제 완료 후)
+          # ============================================================
+          echo "  3️⃣ Target Group 삭제..."
 
-          # 고아 Target Group 삭제
-          echo "🧹 고아 Target Group 삭제..."
-          for tg_arn in $(aws elbv2 describe-target-groups --query "TargetGroups[?contains(TargetGroupName, 'k8s') || contains(TargetGroupName, 'petclinic')].TargetGroupArn" --output text 2>/dev/null); do
-            echo "  삭제 중: $tg_arn"
-            aws elbv2 delete-target-group --target-group-arn $tg_arn 2>/dev/null || true
+          # Target Group 삭제 재시도 (최대 3회)
+          for retry in {1..3}; do
+            TG_ARNS=$(aws elbv2 describe-target-groups \
+              --query "TargetGroups[?contains(TargetGroupName, 'k8s') || contains(TargetGroupName, 'petclinic')].TargetGroupArn" \
+              --output text 2>/dev/null || true)
+
+            if [ -z "$TG_ARNS" ]; then
+              echo "  ✅ 모든 Target Group 삭제 완료"
+              break
+            fi
+
+            echo "    Target Group 삭제 시도 ($retry/3)..."
+            for tg_arn in $TG_ARNS; do
+              TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns $tg_arn --query 'TargetGroups[0].TargetGroupName' --output text 2>/dev/null || echo "unknown")
+              echo "      삭제 중: $TG_NAME"
+              aws elbv2 delete-target-group --target-group-arn $tg_arn 2>/dev/null || true
+            done
+
+            # 삭제 대기
+            sleep 10
           done
 
           echo "✅ ALB 및 Target Group 정리 완료"
@@ -368,18 +422,51 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          echo "⏳ AWS 로드밸런서 삭제 확인..."
+          echo "⏳ AWS 로드밸런서 최종 삭제 확인..."
 
-          # ALB 삭제 확인 (최대 5분 대기)
-          for i in {1..30}; do
-            ALB_COUNT=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd') || contains(LoadBalancerName, 'petclinic')].LoadBalancerArn" --output text 2>/dev/null | wc -w || echo "0")
-            if [ "$ALB_COUNT" -eq 0 ]; then
+          # ALB 최종 삭제 확인 (최대 3분 대기)
+          for i in {1..18}; do
+            ALB_LIST=$(aws elbv2 describe-load-balancers \
+              --query "LoadBalancers[?contains(LoadBalancerName, 'k8s') || contains(LoadBalancerName, 'argocd') || contains(LoadBalancerName, 'petclinic')].[LoadBalancerName,State.Code]" \
+              --output text 2>/dev/null || true)
+
+            if [ -z "$ALB_LIST" ]; then
               echo "✅ 모든 ALB 삭제 완료"
               break
             fi
-            echo "  대기 중... ($i/30) - 남은 ALB: $ALB_COUNT"
+
+            echo "  대기 중... ($i/18)"
+            echo "$ALB_LIST" | while read name state; do
+              echo "    - $name: $state"
+              # deleting 상태가 아닌 ALB가 있으면 다시 삭제 시도
+              if [ "$state" != "deleting" ]; then
+                ALB_ARN=$(aws elbv2 describe-load-balancers --names "$name" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)
+                if [ -n "$ALB_ARN" ]; then
+                  echo "      재삭제 시도..."
+                  aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN" 2>/dev/null || true
+                fi
+              fi
+            done
             sleep 10
           done
+
+          # Target Group 최종 확인
+          echo "⏳ Target Group 최종 확인..."
+          TG_REMAINING=$(aws elbv2 describe-target-groups \
+            --query "TargetGroups[?contains(TargetGroupName, 'k8s') || contains(TargetGroupName, 'petclinic')].TargetGroupName" \
+            --output text 2>/dev/null || true)
+
+          if [ -n "$TG_REMAINING" ]; then
+            echo "  남은 Target Group 재삭제 시도..."
+            for tg_name in $TG_REMAINING; do
+              TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+              if [ -n "$TG_ARN" ]; then
+                aws elbv2 delete-target-group --target-group-arn "$TG_ARN" 2>/dev/null || true
+              fi
+            done
+          fi
+
+          echo "✅ ALB 최종 확인 완료"
 
       - name: Pre-Cleanup Complete
         run: echo "✅ AWS Pre-Cleanup 완료"
