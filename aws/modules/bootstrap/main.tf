@@ -129,7 +129,8 @@ resource "time_sleep" "wait_for_argocd" {
   depends_on = [helm_release.argocd]
 
   # Application Controller(StatefulSet)가 완전히 Ready 되기까지 충분한 대기
-  create_duration = "30s"
+  # 30초는 부족할 수 있음 - 특히 kube-prometheus-stack 같은 대형 CRD 차트 sync 시
+  create_duration = "60s"
 }
 
 # ============================================================================
