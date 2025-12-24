@@ -6,7 +6,9 @@
 # ============================================================================
 
 include "root" {
-  path = find_in_parent_folders()
+  path           = find_in_parent_folders()
+  expose         = true
+  merge_strategy = "deep"
 }
 
 locals {
@@ -48,58 +50,15 @@ dependency "compute" {
 }
 
 # ============================================================================
-# Provider Override - Bootstrap 전용
+# Kubernetes/Helm Provider 설정 - Bootstrap 전용
 # ============================================================================
-# Root의 _provider.tf를 override하여 kubernetes/helm/kubectl 추가
-# 모든 required_providers를 하나의 terraform 블록에 선언해야 함
+# Root의 _provider.tf에서 required_providers 선언됨
+# 여기서는 provider 설정(host, token 등)만 생성
 # ============================================================================
-generate "provider" {
-  path      = "_provider.tf"
+generate "k8s_provider" {
+  path      = "_k8s_provider.tf"
   if_exists = "overwrite_terragrunt"
   contents  = <<-EOF
-    terraform {
-      required_version = ">= 1.0"
-
-      required_providers {
-        aws = {
-          source  = "hashicorp/aws"
-          version = ">= 6.24.0"
-        }
-        tls = {
-          source  = "hashicorp/tls"
-          version = "~> 4.0"
-        }
-        time = {
-          source  = "hashicorp/time"
-          version = "~> 0.9"
-        }
-        kubernetes = {
-          source  = "hashicorp/kubernetes"
-          version = "~> 2.23"
-        }
-        helm = {
-          source  = "hashicorp/helm"
-          version = "~> 2.11"
-        }
-        kubectl = {
-          source  = "gavinbunney/kubectl"
-          version = "~> 1.14"
-        }
-      }
-    }
-
-    provider "aws" {
-      region = "ap-northeast-2"
-
-      default_tags {
-        tags = {
-          Environment = "production"
-          Project     = "petclinic-kr"
-          ManagedBy   = "Terragrunt"
-        }
-      }
-    }
-
     data "aws_eks_cluster_auth" "cluster" {
       name = "${dependency.compute.outputs.eks_cluster_name}"
     }

@@ -62,8 +62,8 @@ remote_state {
 # ============================================================================
 # Provider 자동 생성
 # ============================================================================
-# 주의: kubernetes/helm/kubectl provider는 bootstrap 레이어에서만 설정
-# foundation/compute 레이어에서는 EKS가 없으므로 provider 선언 시 에러 발생
+# 모든 provider 선언을 여기서 함 (required_providers)
+# kubernetes/helm/kubectl provider 설정은 bootstrap에서 별도 파일로 생성
 # ============================================================================
 generate "provider" {
   path      = "_provider.tf"
@@ -84,6 +84,18 @@ generate "provider" {
         time = {
           source  = "hashicorp/time"
           version = "~> 0.9"
+        }
+        kubernetes = {
+          source  = "hashicorp/kubernetes"
+          version = "~> 2.23"
+        }
+        helm = {
+          source  = "hashicorp/helm"
+          version = "~> 2.11"
+        }
+        kubectl = {
+          source  = "gavinbunney/kubectl"
+          version = "~> 1.14"
         }
       }
     }
