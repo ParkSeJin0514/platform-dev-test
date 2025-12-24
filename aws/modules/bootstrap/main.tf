@@ -128,6 +128,7 @@ resource "helm_release" "argocd" {
 resource "time_sleep" "wait_for_argocd" {
   depends_on = [helm_release.argocd]
 
+  # Application Controller(StatefulSet)가 완전히 Ready 되기까지 충분한 대기
   create_duration = "30s"
 }
 
