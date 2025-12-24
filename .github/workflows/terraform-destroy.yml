@@ -622,122 +622,125 @@ jobs:
 
       - name: Delete EKS Security Groups
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           echo "🧹 EKS 관련 보안 그룹 삭제..."
 
           # ============================================================
-          # EKS 클러스터, Node Group 관련 보안 그룹 삭제
-          # EKS 삭제 후에도 남아있을 수 있는 보안 그룹 정리
+          # petclinic VPC의 모든 보안 그룹 삭제
+          # 순서: 1) 모든 규칙 제거 (상호 참조 해제) 2) 보안 그룹 삭제
           # ============================================================
 
-          # 1. EKS 클러스터 보안 그룹 삭제 (eks-cluster-sg-* 패턴)
-          echo "  1️⃣ EKS 클러스터 보안 그룹 삭제..."
-          EKS_CLUSTER_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=tag:Name,Values=*petclinic*eks*" \
-            --query 'SecurityGroups[*].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
+          # petclinic VPC ID 찾기
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*petclinic*" \
+            --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
 
-          if [ -n "$EKS_CLUSTER_SGS" ]; then
-            echo "$EKS_CLUSTER_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              # 먼저 인바운드/아웃바운드 규칙 삭제 (다른 SG 참조 제거)
-              aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg_id" \
-                --query 'SecurityGroupRules[*].SecurityGroupRuleId' --output text 2>/dev/null | \
-                xargs -r -n1 aws ec2 revoke-security-group-ingress --group-id $sg_id --security-group-rule-ids 2>/dev/null || true
-              aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg_id" \
-                --query 'SecurityGroupRules[?IsEgress==`true`].SecurityGroupRuleId' --output text 2>/dev/null | \
-                xargs -r -n1 aws ec2 revoke-security-group-egress --group-id $sg_id --security-group-rule-ids 2>/dev/null || true
-              # 보안 그룹 삭제
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            echo "  petclinic VPC 없음 - 스킵"
+          else
+            echo "  VPC ID: $VPC_ID"
+
+            # 1단계: 모든 보안 그룹의 규칙 제거 (상호 참조 해제)
+            echo "  1️⃣ 모든 보안 그룹 규칙 제거 (상호 참조 해제)..."
+            SG_LIST=$(aws ec2 describe-security-groups \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
+
+            for sg_id in $SG_LIST; do
+              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
+                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
+              [ "$SG_NAME" = "default" ] && continue
+
+              echo "    규칙 제거: $sg_id ($SG_NAME)"
+
+              # 인바운드 규칙 제거
+              INGRESS_RULES=$(aws ec2 describe-security-group-rules \
+                --filters "Name=group-id,Values=$sg_id" \
+                --query 'SecurityGroupRules[?IsEgress==`false`].SecurityGroupRuleId' \
+                --output text 2>/dev/null || true)
+              for rule_id in $INGRESS_RULES; do
+                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
+                aws ec2 revoke-security-group-ingress --group-id $sg_id \
+                  --security-group-rule-ids $rule_id 2>/dev/null || true
+              done
+
+              # 아웃바운드 규칙 제거
+              EGRESS_RULES=$(aws ec2 describe-security-group-rules \
+                --filters "Name=group-id,Values=$sg_id" \
+                --query 'SecurityGroupRules[?IsEgress==`true`].SecurityGroupRuleId' \
+                --output text 2>/dev/null || true)
+              for rule_id in $EGRESS_RULES; do
+                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
+                aws ec2 revoke-security-group-egress --group-id $sg_id \
+                  --security-group-rule-ids $rule_id 2>/dev/null || true
+              done
+            done
+
+            # 2단계: 보안 그룹 삭제 (default 제외)
+            echo "  2️⃣ 보안 그룹 삭제..."
+            for sg_id in $SG_LIST; do
+              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
+                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
+              [ "$SG_NAME" = "default" ] && continue
+
+              echo "    삭제: $sg_id ($SG_NAME)"
               aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
             done
-          else
-            echo "    EKS 클러스터 보안 그룹 없음"
-          fi
 
-          # 2. EKS 관리형 보안 그룹 삭제 (eks-cluster-sg-* 자동 생성 패턴)
-          echo "  2️⃣ EKS 관리형 보안 그룹 삭제..."
-          EKS_MANAGED_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=eks-cluster-sg-*" \
-            --query 'SecurityGroups[*].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
+            # 3단계: 삭제 확인 및 재시도
+            echo "  3️⃣ 삭제 확인 및 재시도..."
+            for i in {1..3}; do
+              REMAINING=$(aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+                --output text 2>/dev/null || true)
 
-          if [ -n "$EKS_MANAGED_SGS" ]; then
-            echo "$EKS_MANAGED_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+              if [ -z "$REMAINING" ]; then
+                echo "    ✅ 모든 보안 그룹 삭제 완료"
+                break
+              fi
+
+              echo "    재시도 ($i/3) - 남은 보안 그룹: $REMAINING"
+              for sg_id in $REMAINING; do
+                aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+              done
+              sleep 5
             done
-          else
-            echo "    EKS 관리형 보안 그룹 없음"
           fi
 
-          # 3. Node Group 보안 그룹 삭제
-          echo "  3️⃣ Node Group 보안 그룹 삭제..."
-          NODE_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=tag:Name,Values=*node*,*worker*" \
-            --query 'SecurityGroups[?contains(GroupName, `petclinic`) || contains(Tags[?Key==`Name`].Value | [0], `petclinic`)].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
-
-          if [ -n "$NODE_SGS" ]; then
-            echo "$NODE_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-            done
-          else
-            echo "    Node Group 보안 그룹 없음"
-          fi
-
-          # 4. Karpenter 노드 보안 그룹 삭제
-          echo "  4️⃣ Karpenter 보안 그룹 삭제..."
-          KARPENTER_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=tag:karpenter.sh/discovery,Values=*" \
-            --query 'SecurityGroups[*].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
-
-          if [ -n "$KARPENTER_SGS" ]; then
-            echo "$KARPENTER_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-            done
-          else
-            echo "    Karpenter 보안 그룹 없음"
-          fi
-
-          # 5. kubernetes.io/cluster 태그가 있는 보안 그룹 삭제
-          echo "  5️⃣ K8s 클러스터 태그 보안 그룹 삭제..."
+          # k8s로 시작하는 보안 그룹 삭제 (다른 VPC에 있을 수 있음)
+          echo "  4️⃣ k8s 패턴 보안 그룹 삭제..."
           K8S_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=tag-key,Values=kubernetes.io/cluster/*" \
-            --query 'SecurityGroups[*].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
+            --filters "Name=group-name,Values=k8s-*" \
+            --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
 
-          if [ -n "$K8S_SGS" ]; then
-            echo "$K8S_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+          for sg_id in $K8S_SGS; do
+            echo "    삭제: $sg_id"
+            # 규칙 먼저 제거
+            for rule_id in $(aws ec2 describe-security-group-rules \
+              --filters "Name=group-id,Values=$sg_id" \
+              --query 'SecurityGroupRules[*].SecurityGroupRuleId' \
+              --output text 2>/dev/null || true); do
+              [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
+              aws ec2 revoke-security-group-ingress --group-id $sg_id \
+                --security-group-rule-ids $rule_id 2>/dev/null || true
+              aws ec2 revoke-security-group-egress --group-id $sg_id \
+                --security-group-rule-ids $rule_id 2>/dev/null || true
             done
-          else
-            echo "    K8s 클러스터 태그 보안 그룹 없음"
-          fi
+            aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+          done
 
-          # 6. 최종 확인 - petclinic 관련 보안 그룹
-          echo "  6️⃣ petclinic 관련 보안 그룹 최종 삭제..."
-          REMAINING_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=*petclinic*" \
-            --query 'SecurityGroups[?GroupName!=`default`].[GroupId,GroupName]' \
-            --output text 2>/dev/null || true)
+          # eks-cluster-sg 패턴 보안 그룹 삭제
+          echo "  5️⃣ eks-cluster-sg 패턴 보안 그룹 삭제..."
+          EKS_SGS=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=eks-cluster-sg-*" \
+            --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
 
-          if [ -n "$REMAINING_SGS" ]; then
-            echo "$REMAINING_SGS" | while read sg_id sg_name; do
-              echo "    삭제: $sg_name ($sg_id)"
-              # 규칙 먼저 삭제
-              aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg_id" \
-                --query 'SecurityGroupRules[?!IsEgress].SecurityGroupRuleId' --output text 2>/dev/null | \
-                xargs -r -n1 aws ec2 revoke-security-group-ingress --group-id $sg_id --security-group-rule-ids 2>/dev/null || true
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-            done
-          else
-            echo "    남은 petclinic 보안 그룹 없음"
-          fi
+          for sg_id in $EKS_SGS; do
+            echo "    삭제: $sg_id"
+            aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+          done
 
           echo "✅ 보안 그룹 정리 완료"
 
