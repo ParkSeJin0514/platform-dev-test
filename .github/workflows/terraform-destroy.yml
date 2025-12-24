@@ -584,350 +584,6 @@ jobs:
 
           echo "✅ 남은 ALB 삭제 완료"
 
-      - name: Force Delete EKS Cluster and Node Groups
-        continue-on-error: true
-        timeout-minutes: 20
-        run: |
-          echo "🧹 EKS 클러스터 및 Node Group 강제 삭제..."
-
-          # ============================================================
-          # EKS 클러스터 및 관련 리소스 강제 삭제
-          # Terraform destroy가 실패해도 EKS를 삭제하기 위함
-          # ============================================================
-
-          # 1. EKS 클러스터 목록 조회 (petclinic 포함하는 모든 클러스터)
-          echo "  1️⃣ EKS 클러스터 조회..."
-          ALL_CLUSTERS=$(aws eks list-clusters --query 'clusters[*]' --output text 2>/dev/null || true)
-          EKS_CLUSTERS=""
-          for c in $ALL_CLUSTERS; do
-            if echo "$c" | grep -qi "petclinic"; then
-              EKS_CLUSTERS="$EKS_CLUSTERS $c"
-            fi
-          done
-          EKS_CLUSTERS=$(echo "$EKS_CLUSTERS" | xargs)
-
-          if [ -z "$EKS_CLUSTERS" ]; then
-            echo "  삭제할 EKS 클러스터 없음"
-          else
-            echo "  삭제 대상 클러스터: $EKS_CLUSTERS"
-
-            for cluster in $EKS_CLUSTERS; do
-              echo ""
-              echo "  =========================================="
-              echo "  클러스터 삭제 시작: $cluster"
-              echo "  =========================================="
-
-              # 2. Node Group 목록 조회 및 삭제
-              echo "    2️⃣ Node Group 삭제..."
-              NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $cluster --query 'nodegroups[*]' --output text 2>/dev/null || true)
-
-              if [ -n "$NODE_GROUPS" ]; then
-                echo "      Node Groups: $NODE_GROUPS"
-                for ng in $NODE_GROUPS; do
-                  echo "      삭제 요청: $ng"
-                  aws eks delete-nodegroup --cluster-name $cluster --nodegroup-name $ng 2>/dev/null || true
-                done
-
-                # Node Group 삭제 대기 (최대 8분 - Node Group 삭제는 시간이 오래 걸림)
-                echo "    Node Group 삭제 대기 (최대 8분)..."
-                for i in {1..48}; do
-                  REMAINING_NG=$(aws eks list-nodegroups --cluster-name $cluster --query 'nodegroups[*]' --output text 2>/dev/null || true)
-                  if [ -z "$REMAINING_NG" ]; then
-                    echo "    ✅ 모든 Node Group 삭제 완료"
-                    break
-                  fi
-
-                  # Node Group 상태 확인
-                  for ng in $REMAINING_NG; do
-                    NG_STATUS=$(aws eks describe-nodegroup --cluster-name $cluster --nodegroup-name $ng --query 'nodegroup.status' --output text 2>/dev/null || echo "UNKNOWN")
-                    echo "      대기 중... ($i/48) - $ng: $NG_STATUS"
-                  done
-                  sleep 10
-                done
-
-                # 남은 Node Group 강제 삭제 재시도
-                REMAINING_NG=$(aws eks list-nodegroups --cluster-name $cluster --query 'nodegroups[*]' --output text 2>/dev/null || true)
-                if [ -n "$REMAINING_NG" ]; then
-                  echo "    ⚠️ 남은 Node Group 재삭제 시도..."
-                  for ng in $REMAINING_NG; do
-                    aws eks delete-nodegroup --cluster-name $cluster --nodegroup-name $ng --force 2>/dev/null || true
-                  done
-                fi
-              else
-                echo "      Node Group 없음"
-              fi
-
-              # 3. Fargate Profile 삭제 (있는 경우)
-              echo "    3️⃣ Fargate Profile 삭제..."
-              FARGATE_PROFILES=$(aws eks list-fargate-profiles --cluster-name $cluster --query 'fargateProfileNames[*]' --output text 2>/dev/null || true)
-              if [ -n "$FARGATE_PROFILES" ]; then
-                for fp in $FARGATE_PROFILES; do
-                  echo "      삭제 중: $fp"
-                  aws eks delete-fargate-profile --cluster-name $cluster --fargate-profile-name $fp 2>/dev/null || true
-                done
-                # Fargate Profile 삭제 대기
-                sleep 30
-              else
-                echo "      Fargate Profile 없음"
-              fi
-
-              # 4. EKS Add-ons 삭제 (클러스터 삭제 전 필요할 수 있음)
-              echo "    4️⃣ EKS Add-ons 삭제..."
-              ADDONS=$(aws eks list-addons --cluster-name $cluster --query 'addons[*]' --output text 2>/dev/null || true)
-              if [ -n "$ADDONS" ]; then
-                for addon in $ADDONS; do
-                  echo "      삭제 중: $addon"
-                  aws eks delete-addon --cluster-name $cluster --addon-name $addon 2>/dev/null || true
-                done
-              else
-                echo "      Add-ons 없음"
-              fi
-
-              # 5. Node Group 최종 삭제 확인
-              echo "    5️⃣ Node Group 최종 삭제 확인..."
-              for i in {1..12}; do
-                REMAINING_NG=$(aws eks list-nodegroups --cluster-name $cluster --query 'nodegroups[*]' --output text 2>/dev/null || true)
-                if [ -z "$REMAINING_NG" ]; then
-                  echo "    ✅ Node Group 최종 삭제 확인 완료"
-                  break
-                fi
-                echo "      대기 중... ($i/12)"
-                sleep 10
-              done
-
-              # 6. EKS 클러스터 삭제
-              echo "    6️⃣ EKS 클러스터 삭제 요청..."
-              aws eks delete-cluster --name $cluster 2>/dev/null || true
-            done
-
-            # 7. EKS 클러스터 삭제 대기 (최대 10분)
-            echo ""
-            echo "  7️⃣ EKS 클러스터 삭제 대기 (최대 10분)..."
-            for i in {1..60}; do
-              REMAINING_CLUSTERS=""
-              for c in $(aws eks list-clusters --query 'clusters[*]' --output text 2>/dev/null || true); do
-                if echo "$c" | grep -qi "petclinic"; then
-                  REMAINING_CLUSTERS="$REMAINING_CLUSTERS $c"
-                fi
-              done
-              REMAINING_CLUSTERS=$(echo "$REMAINING_CLUSTERS" | xargs)
-
-              if [ -z "$REMAINING_CLUSTERS" ]; then
-                echo "  ✅ 모든 EKS 클러스터 삭제 완료"
-                break
-              fi
-
-              # 클러스터 상태 확인
-              for cluster in $REMAINING_CLUSTERS; do
-                STATUS=$(aws eks describe-cluster --name $cluster --query 'cluster.status' --output text 2>/dev/null || echo "UNKNOWN")
-                echo "    대기 중... ($i/60) - $cluster: $STATUS"
-
-                # DELETING이 아니면 다시 삭제 시도
-                if [ "$STATUS" != "DELETING" ]; then
-                  echo "      재삭제 시도..."
-                  aws eks delete-cluster --name $cluster 2>/dev/null || true
-                fi
-              done
-              sleep 10
-            done
-          fi
-
-          echo ""
-          echo "✅ EKS 클러스터 및 Node Group 정리 완료"
-
-      # ============================================================
-      # RDS 삭제 (보안 그룹 삭제 전 필수)
-      # ============================================================
-      - name: Delete RDS Instances
-        continue-on-error: true
-        timeout-minutes: 15
-        run: |
-          echo "🧹 RDS 인스턴스 삭제..."
-
-          # petclinic 관련 RDS 인스턴스 조회
-          RDS_INSTANCES=$(aws rds describe-db-instances \
-            --query "DBInstances[?contains(DBInstanceIdentifier, 'petclinic')].DBInstanceIdentifier" \
-            --output text 2>/dev/null || true)
-
-          if [ -z "$RDS_INSTANCES" ]; then
-            echo "  삭제할 RDS 인스턴스 없음"
-          else
-            for db_id in $RDS_INSTANCES; do
-              echo "  RDS 삭제 중: $db_id"
-
-              # Deletion Protection 해제
-              aws rds modify-db-instance \
-                --db-instance-identifier $db_id \
-                --no-deletion-protection \
-                --apply-immediately 2>/dev/null || true
-
-              # 잠시 대기 (설정 적용)
-              sleep 5
-
-              # RDS 삭제 (최종 스냅샷 생성 안 함)
-              aws rds delete-db-instance \
-                --db-instance-identifier $db_id \
-                --skip-final-snapshot \
-                --delete-automated-backups 2>/dev/null || true
-            done
-
-            # RDS 삭제 대기 (최대 10분)
-            echo "  RDS 삭제 대기..."
-            for i in {1..60}; do
-              REMAINING=$(aws rds describe-db-instances \
-                --query "DBInstances[?contains(DBInstanceIdentifier, 'petclinic')].[DBInstanceIdentifier,DBInstanceStatus]" \
-                --output text 2>/dev/null || true)
-
-              if [ -z "$REMAINING" ]; then
-                echo "  ✅ 모든 RDS 인스턴스 삭제 완료"
-                break
-              fi
-
-              echo "    대기 중... ($i/60)"
-              echo "$REMAINING" | while read db_id status; do
-                echo "      - $db_id: $status"
-              done
-              sleep 10
-            done
-          fi
-
-          # DB Subnet Group 삭제
-          echo "  DB Subnet Group 삭제..."
-          DB_SUBNET_GROUPS=$(aws rds describe-db-subnet-groups \
-            --query "DBSubnetGroups[?contains(DBSubnetGroupName, 'petclinic')].DBSubnetGroupName" \
-            --output text 2>/dev/null || true)
-
-          for sg_name in $DB_SUBNET_GROUPS; do
-            echo "    삭제: $sg_name"
-            aws rds delete-db-subnet-group --db-subnet-group-name $sg_name 2>/dev/null || true
-          done
-
-          echo "✅ RDS 정리 완료"
-
-      - name: Delete EKS Security Groups
-        continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          echo "🧹 EKS 관련 보안 그룹 삭제..."
-
-          # ============================================================
-          # petclinic VPC의 모든 보안 그룹 삭제
-          # 순서: 1) 모든 규칙 제거 (상호 참조 해제) 2) 보안 그룹 삭제
-          # ============================================================
-
-          # petclinic VPC ID 찾기
-          VPC_ID=$(aws ec2 describe-vpcs \
-            --filters "Name=tag:Name,Values=*petclinic*" \
-            --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
-
-          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
-            echo "  petclinic VPC 없음 - 스킵"
-          else
-            echo "  VPC ID: $VPC_ID"
-
-            # 1단계: 모든 보안 그룹의 규칙 제거 (상호 참조 해제)
-            echo "  1️⃣ 모든 보안 그룹 규칙 제거 (상호 참조 해제)..."
-            SG_LIST=$(aws ec2 describe-security-groups \
-              --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
-
-            for sg_id in $SG_LIST; do
-              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
-                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
-              [ "$SG_NAME" = "default" ] && continue
-
-              echo "    규칙 제거: $sg_id ($SG_NAME)"
-
-              # 인바운드 규칙 제거
-              INGRESS_RULES=$(aws ec2 describe-security-group-rules \
-                --filters "Name=group-id,Values=$sg_id" \
-                --query 'SecurityGroupRules[?IsEgress==`false`].SecurityGroupRuleId' \
-                --output text 2>/dev/null || true)
-              for rule_id in $INGRESS_RULES; do
-                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
-                aws ec2 revoke-security-group-ingress --group-id $sg_id \
-                  --security-group-rule-ids $rule_id 2>/dev/null || true
-              done
-
-              # 아웃바운드 규칙 제거
-              EGRESS_RULES=$(aws ec2 describe-security-group-rules \
-                --filters "Name=group-id,Values=$sg_id" \
-                --query 'SecurityGroupRules[?IsEgress==`true`].SecurityGroupRuleId' \
-                --output text 2>/dev/null || true)
-              for rule_id in $EGRESS_RULES; do
-                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
-                aws ec2 revoke-security-group-egress --group-id $sg_id \
-                  --security-group-rule-ids $rule_id 2>/dev/null || true
-              done
-            done
-
-            # 2단계: 보안 그룹 삭제 (default 제외)
-            echo "  2️⃣ 보안 그룹 삭제..."
-            for sg_id in $SG_LIST; do
-              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
-                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
-              [ "$SG_NAME" = "default" ] && continue
-
-              echo "    삭제: $sg_id ($SG_NAME)"
-              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-            done
-
-            # 3단계: 삭제 확인 및 재시도
-            echo "  3️⃣ 삭제 확인 및 재시도..."
-            for i in {1..3}; do
-              REMAINING=$(aws ec2 describe-security-groups \
-                --filters "Name=vpc-id,Values=$VPC_ID" \
-                --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
-                --output text 2>/dev/null || true)
-
-              if [ -z "$REMAINING" ]; then
-                echo "    ✅ 모든 보안 그룹 삭제 완료"
-                break
-              fi
-
-              echo "    재시도 ($i/3) - 남은 보안 그룹: $REMAINING"
-              for sg_id in $REMAINING; do
-                aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-              done
-              sleep 5
-            done
-          fi
-
-          # k8s로 시작하는 보안 그룹 삭제 (다른 VPC에 있을 수 있음)
-          echo "  4️⃣ k8s 패턴 보안 그룹 삭제..."
-          K8S_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=k8s-*" \
-            --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
-
-          for sg_id in $K8S_SGS; do
-            echo "    삭제: $sg_id"
-            # 규칙 먼저 제거
-            for rule_id in $(aws ec2 describe-security-group-rules \
-              --filters "Name=group-id,Values=$sg_id" \
-              --query 'SecurityGroupRules[*].SecurityGroupRuleId' \
-              --output text 2>/dev/null || true); do
-              [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
-              aws ec2 revoke-security-group-ingress --group-id $sg_id \
-                --security-group-rule-ids $rule_id 2>/dev/null || true
-              aws ec2 revoke-security-group-egress --group-id $sg_id \
-                --security-group-rule-ids $rule_id 2>/dev/null || true
-            done
-            aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-          done
-
-          # eks-cluster-sg 패턴 보안 그룹 삭제
-          echo "  5️⃣ eks-cluster-sg 패턴 보안 그룹 삭제..."
-          EKS_SGS=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=eks-cluster-sg-*" \
-            --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
-
-          for sg_id in $EKS_SGS; do
-            echo "    삭제: $sg_id"
-            aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
-          done
-
-          echo "✅ 보안 그룹 정리 완료"
-
       - name: Pre-Cleanup Complete
         run: echo "✅ AWS Pre-Cleanup 완료"
 
@@ -1378,11 +1034,264 @@ jobs:
           echo "Cloud: ${{ github.event.inputs.cloud }}"
           echo "Layer: ${{ github.event.inputs.layer }}"
 
+  # ============================================================================
+  # AWS Post-Cleanup (Terraform Destroy 후 남은 리소스 정리)
+  # ============================================================================
+  aws-post-cleanup:
+    name: 'AWS Post-Cleanup'
+    needs: [destroy]
+    if: always() && github.event.inputs.cloud == 'aws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ============================================================
+      # Terraform Destroy 실패 시 남은 리소스 강제 삭제
+      # ============================================================
+      - name: Force Delete Remaining EKS Clusters
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          echo "🧹 남은 EKS 클러스터 강제 삭제..."
+
+          # petclinic 관련 EKS 클러스터 조회
+          EKS_CLUSTERS=""
+          for c in $(aws eks list-clusters --query 'clusters[*]' --output text 2>/dev/null || true); do
+            if echo "$c" | grep -qi "petclinic"; then
+              EKS_CLUSTERS="$EKS_CLUSTERS $c"
+            fi
+          done
+          EKS_CLUSTERS=$(echo "$EKS_CLUSTERS" | xargs)
+
+          if [ -z "$EKS_CLUSTERS" ]; then
+            echo "  삭제할 EKS 클러스터 없음"
+          else
+            for cluster in $EKS_CLUSTERS; do
+              echo "  클러스터 삭제: $cluster"
+
+              # Node Group 삭제
+              for ng in $(aws eks list-nodegroups --cluster-name $cluster --query 'nodegroups[*]' --output text 2>/dev/null || true); do
+                echo "    Node Group 삭제: $ng"
+                aws eks delete-nodegroup --cluster-name $cluster --nodegroup-name $ng 2>/dev/null || true
+              done
+
+              # Fargate Profile 삭제
+              for fp in $(aws eks list-fargate-profiles --cluster-name $cluster --query 'fargateProfileNames[*]' --output text 2>/dev/null || true); do
+                echo "    Fargate Profile 삭제: $fp"
+                aws eks delete-fargate-profile --cluster-name $cluster --fargate-profile-name $fp 2>/dev/null || true
+              done
+
+              # Add-ons 삭제
+              for addon in $(aws eks list-addons --cluster-name $cluster --query 'addons[*]' --output text 2>/dev/null || true); do
+                aws eks delete-addon --cluster-name $cluster --addon-name $addon 2>/dev/null || true
+              done
+            done
+
+            # Node Group 삭제 대기
+            echo "  Node Group 삭제 대기..."
+            for i in {1..30}; do
+              ALL_DELETED=true
+              for cluster in $EKS_CLUSTERS; do
+                NG_COUNT=$(aws eks list-nodegroups --cluster-name $cluster --query 'length(nodegroups)' --output text 2>/dev/null || echo "0")
+                if [ "$NG_COUNT" != "0" ]; then
+                  ALL_DELETED=false
+                  break
+                fi
+              done
+              if [ "$ALL_DELETED" = true ]; then
+                echo "  ✅ Node Group 삭제 완료"
+                break
+              fi
+              echo "    대기 중... ($i/30)"
+              sleep 10
+            done
+
+            # EKS 클러스터 삭제
+            for cluster in $EKS_CLUSTERS; do
+              echo "  EKS 클러스터 삭제 요청: $cluster"
+              aws eks delete-cluster --name $cluster 2>/dev/null || true
+            done
+
+            # 클러스터 삭제 대기
+            echo "  EKS 클러스터 삭제 대기..."
+            for i in {1..60}; do
+              REMAINING=""
+              for c in $(aws eks list-clusters --query 'clusters[*]' --output text 2>/dev/null || true); do
+                if echo "$c" | grep -qi "petclinic"; then
+                  REMAINING="$REMAINING $c"
+                fi
+              done
+              if [ -z "$(echo $REMAINING | xargs)" ]; then
+                echo "  ✅ 모든 EKS 클러스터 삭제 완료"
+                break
+              fi
+              echo "    대기 중... ($i/60) - 남은 클러스터: $REMAINING"
+              sleep 10
+            done
+          fi
+
+      - name: Force Delete Remaining RDS Instances
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          echo "🧹 남은 RDS 인스턴스 삭제..."
+
+          RDS_INSTANCES=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'petclinic')].DBInstanceIdentifier" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "$RDS_INSTANCES" ]; then
+            echo "  삭제할 RDS 인스턴스 없음"
+          else
+            for db_id in $RDS_INSTANCES; do
+              echo "  RDS 삭제: $db_id"
+              aws rds modify-db-instance --db-instance-identifier $db_id \
+                --no-deletion-protection --apply-immediately 2>/dev/null || true
+              sleep 5
+              aws rds delete-db-instance --db-instance-identifier $db_id \
+                --skip-final-snapshot --delete-automated-backups 2>/dev/null || true
+            done
+
+            # RDS 삭제 대기
+            echo "  RDS 삭제 대기..."
+            for i in {1..60}; do
+              REMAINING=$(aws rds describe-db-instances \
+                --query "DBInstances[?contains(DBInstanceIdentifier, 'petclinic')].DBInstanceIdentifier" \
+                --output text 2>/dev/null || true)
+              if [ -z "$REMAINING" ]; then
+                echo "  ✅ 모든 RDS 삭제 완료"
+                break
+              fi
+              echo "    대기 중... ($i/60)"
+              sleep 10
+            done
+          fi
+
+          # DB Subnet Group 삭제
+          echo "  DB Subnet Group 삭제..."
+          for sg in $(aws rds describe-db-subnet-groups \
+            --query "DBSubnetGroups[?contains(DBSubnetGroupName, 'petclinic')].DBSubnetGroupName" \
+            --output text 2>/dev/null || true); do
+            aws rds delete-db-subnet-group --db-subnet-group-name $sg 2>/dev/null || true
+          done
+
+      - name: Force Delete Remaining ALB and Target Groups
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "🧹 남은 ALB 및 Target Group 삭제..."
+
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*petclinic*" \
+            --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
+
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            # ALB 삭제
+            for alb_arn in $(aws elbv2 describe-load-balancers \
+              --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" \
+              --output text 2>/dev/null || true); do
+              echo "  ALB 삭제: $alb_arn"
+              aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn 2>/dev/null || true
+            done
+
+            # ALB 삭제 대기
+            sleep 30
+
+            # Target Group 삭제
+            for tg_arn in $(aws elbv2 describe-target-groups \
+              --query "TargetGroups[?VpcId=='$VPC_ID'].TargetGroupArn" \
+              --output text 2>/dev/null || true); do
+              echo "  Target Group 삭제: $tg_arn"
+              aws elbv2 delete-target-group --target-group-arn $tg_arn 2>/dev/null || true
+            done
+          fi
+
+      - name: Force Delete Security Groups
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "🧹 보안 그룹 삭제..."
+
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*petclinic*" \
+            --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)
+
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            SG_LIST=$(aws ec2 describe-security-groups \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true)
+
+            # 1단계: 모든 규칙 제거
+            for sg_id in $SG_LIST; do
+              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
+                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
+              [ "$SG_NAME" = "default" ] && continue
+
+              for rule_id in $(aws ec2 describe-security-group-rules \
+                --filters "Name=group-id,Values=$sg_id" \
+                --query 'SecurityGroupRules[?IsEgress==`false`].SecurityGroupRuleId' \
+                --output text 2>/dev/null || true); do
+                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
+                aws ec2 revoke-security-group-ingress --group-id $sg_id \
+                  --security-group-rule-ids $rule_id 2>/dev/null || true
+              done
+
+              for rule_id in $(aws ec2 describe-security-group-rules \
+                --filters "Name=group-id,Values=$sg_id" \
+                --query 'SecurityGroupRules[?IsEgress==`true`].SecurityGroupRuleId' \
+                --output text 2>/dev/null || true); do
+                [ -z "$rule_id" ] || [ "$rule_id" = "None" ] && continue
+                aws ec2 revoke-security-group-egress --group-id $sg_id \
+                  --security-group-rule-ids $rule_id 2>/dev/null || true
+              done
+            done
+
+            # 2단계: 보안 그룹 삭제
+            for sg_id in $SG_LIST; do
+              SG_NAME=$(aws ec2 describe-security-groups --group-ids $sg_id \
+                --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || echo "unknown")
+              [ "$SG_NAME" = "default" ] && continue
+              echo "  삭제: $sg_id ($SG_NAME)"
+              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+            done
+
+            # 3단계: 재시도
+            for i in {1..3}; do
+              REMAINING=$(aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+                --output text 2>/dev/null || true)
+              if [ -z "$REMAINING" ]; then
+                echo "  ✅ 모든 보안 그룹 삭제 완료"
+                break
+              fi
+              for sg_id in $REMAINING; do
+                aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+              done
+              sleep 5
+            done
+          fi
+
+          # k8s/eks 패턴 보안 그룹 삭제
+          for sg_id in $(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=k8s-*,eks-cluster-sg-*" \
+            --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null || true); do
+            aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || true
+          done
+
+      - name: Post-Cleanup Complete
+        run: echo "✅ AWS Post-Cleanup 완료"
+
   # ============================================
   # Slack 알림 - 완료
   # ============================================
   notify-complete:
-    needs: [destroy]
+    needs: [destroy, aws-post-cleanup]
     if: always()
     runs-on: ubuntu-latest
     steps:
