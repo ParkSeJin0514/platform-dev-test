@@ -90,7 +90,4 @@ inputs = {
   db_skip_final_snapshot    = local.env.locals.db_skip_final_snapshot
 
   ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
-
-  # Monitoring 설정 (kube-prometheus-stack)
-  enable_monitoring = local.env.locals.enable_monitoring
 }

@@ -202,16 +202,13 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 - **원인**: RDS SG에 Cluster SG 미등록 (Karpenter 노드는 Cluster SG 사용)
 - **해결**: `cluster_security_group_id`를 RDS 허용 SG에 추가
 
-### Kubernetes cluster unreachable (Helm Provider)
-- **원인**: EKS 클러스터 생성 전에 Helm Provider가 연결 시도
-- **해결**: `enable_monitoring` 변수로 2단계 배포
-  ```bash
-  # 1단계: EKS 생성 (enable_monitoring = false)
-  cd aws/compute && terragrunt apply
+## Monitoring (kube-prometheus-stack)
 
-  # 2단계: Helm 배포 (enable_monitoring = true로 변경 후)
-  terragrunt apply
-  ```
+kube-prometheus-stack은 **ArgoCD (GitOps)**를 통해 배포합니다.
+
+- Terraform compute 레이어에서 제거됨
+- `platform-gitops-last` 저장소의 Helm 차트로 관리
+- EKS 클러스터 생성 후 ArgoCD가 자동 배포
 
 ## 관련 저장소
 

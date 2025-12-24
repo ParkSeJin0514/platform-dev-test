@@ -142,19 +142,6 @@ output "karpenter_iam_ready" {
 }
 
 # ============================================================================
-# Monitoring Outputs (kube-prometheus-stack)
-# ============================================================================
-output "kube_prometheus_stack_status" {
-  description = "kube-prometheus-stack Helm release 상태"
-  value       = var.enable_monitoring ? helm_release.kube_prometheus_stack[0].status : "not deployed"
-}
-
-output "kube_prometheus_stack_namespace" {
-  description = "kube-prometheus-stack 설치 네임스페이스"
-  value       = var.enable_monitoring ? helm_release.kube_prometheus_stack[0].namespace : "not deployed"
-}
-
-# ============================================================================
 # 접속 가이드
 # ============================================================================
 output "connection_guide" {
