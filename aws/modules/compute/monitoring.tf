@@ -8,15 +8,19 @@
 # ============================================================================
 # Helm Provider Configuration (EKS 인증)
 # ============================================================================
+# NOTE: enable_monitoring = true 일 때만 실제 EKS 연결 시도
+# 첫 번째 apply (EKS 생성): enable_monitoring = false
+# 두 번째 apply (Helm 배포): enable_monitoring = true
+# ============================================================================
 provider "helm" {
   kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    host                   = var.enable_monitoring ? module.eks.cluster_endpoint : "https://localhost"
+    cluster_ca_certificate = var.enable_monitoring ? base64decode(module.eks.cluster_certificate_authority_data) : ""
 
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
       command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_id, "--region", var.region]
+      args        = var.enable_monitoring ? ["eks", "get-token", "--cluster-name", module.eks.cluster_id, "--region", var.region] : ["--version"]
     }
   }
 }
@@ -25,6 +29,7 @@ provider "helm" {
 # kube-prometheus-stack Helm Release
 # ============================================================================
 resource "helm_release" "kube_prometheus_stack" {
+  count = var.enable_monitoring ? 1 : 0
   name             = "kube-prometheus"
   repository       = "https://prometheus-community.github.io/helm-charts"
   chart            = "kube-prometheus-stack"

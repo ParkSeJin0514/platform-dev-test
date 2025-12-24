@@ -283,3 +283,12 @@ variable "grafana_admin_password" {
   default     = "admin"
   sensitive   = true
 }
+
+# ============================================================================
+# Helm 배포 제어 변수
+# ============================================================================
+variable "enable_monitoring" {
+  type        = bool
+  description = "kube-prometheus-stack 배포 활성화 (EKS 클러스터 생성 후 true로 설정)"
+  default     = false
+}
