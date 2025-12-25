@@ -137,6 +137,7 @@ output "kubectl_setup_command" {
 
 output "mgmt_quickstart" {
   description = "Quick start commands for mgmt server"
+  sensitive   = true
   value       = <<-EOT
     # 1. kubectl 설정 (OS Login 사용자는 필수)
     configure-kubectl
