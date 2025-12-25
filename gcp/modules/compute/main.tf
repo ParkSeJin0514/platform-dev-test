@@ -217,48 +217,7 @@ resource "helm_release" "kube_prometheus_stack" {
 }
 
 # ============================================================================
-# Cluster Monitoring Ingress (GCE Ingress for kube-prometheus-stack)
+# Cluster Monitoring Ingress는 petclinic-gitops에서 관리
 # ============================================================================
-resource "kubernetes_ingress_v1" "cluster_monitoring" {
-  metadata {
-    name      = "cluster-monitoring-ingress"
-    namespace = "petclinic"
-    annotations = {
-      "kubernetes.io/ingress.class" = "gce"
-    }
-  }
-
-  spec {
-    ingress_class_name = "gce"
-    rule {
-      http {
-        path {
-          path      = "/"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "kube-prometheus-stack-grafana"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-        path {
-          path      = "/prometheus"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "kube-prometheus-stack-prometheus"
-              port {
-                number = 9090
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  depends_on = [helm_release.kube_prometheus_stack]
-}
+# Ingress 리소스는 petclinic-gitops/overlays/gcp/cluster-monitoring-ingress.yaml에서 관리
+# Terraform은 kube-prometheus-stack Helm Chart만 설치

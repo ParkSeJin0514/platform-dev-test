@@ -358,14 +358,14 @@ variable "grafana_storage_size" {
 }
 ```
 
-### Ingress 자동 생성
+### Ingress 관리
 
-Terraform이 kube-prometheus-stack 설치 후 Ingress도 자동 생성합니다:
+Ingress는 **petclinic-gitops에서 통합 관리**됩니다:
 
-- **AWS**: ALB Ingress (Grafana `/`, Prometheus `/prometheus`)
-- **GCP**: GCE Ingress (Grafana `/`, Prometheus `/prometheus`)
+- **AWS**: `overlays/aws/cluster-monitoring-ingress.yaml` (ALB)
+- **GCP**: `overlays/gcp/cluster-monitoring-ingress.yaml` (GCE)
 
-> **참고**: petclinic-gitops의 `cluster-monitoring-ingress.yaml`은 주석 처리되어 있습니다. (Terraform에서 관리)
+> Terraform은 Helm Chart만 설치하고, Ingress는 GitOps로 관리하여 모든 Ingress를 한 곳에서 관리합니다.
 
 ### GCP NodePort 요구사항
 
