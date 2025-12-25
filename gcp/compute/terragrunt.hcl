@@ -37,7 +37,7 @@ dependency "foundation" {
     public_subnet_id              = "projects/mock/regions/asia-northeast3/subnetworks/mock-public"
     private_subnet_id             = "projects/mock/regions/asia-northeast3/subnetworks/mock-private"
   }
-  mock_outputs_allowed_terraform_commands = ["plan", "validate", "destroy"]
+  mock_outputs_allowed_terraform_commands = ["plan", "validate"]
 }
 
 # ============================================================================

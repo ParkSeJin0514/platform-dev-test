@@ -28,7 +28,7 @@ dependency "foundation" {
     project_name = "mock-name"
     region       = "asia-northeast3"
   }
-  mock_outputs_allowed_terraform_commands = ["plan", "validate", "destroy"]
+  mock_outputs_allowed_terraform_commands = ["plan", "validate"]
 }
 
 dependency "compute" {
@@ -41,7 +41,7 @@ dependency "compute" {
     gke_cluster_location       = "asia-northeast3"
     external_secrets_sa_email  = "mock@mock-project.iam.gserviceaccount.com"
   }
-  mock_outputs_allowed_terraform_commands = ["plan", "validate", "destroy"]
+  mock_outputs_allowed_terraform_commands = ["plan", "validate"]
 }
 
 # ============================================================================
