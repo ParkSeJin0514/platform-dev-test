@@ -146,6 +146,7 @@ output "karpenter_iam_ready" {
 # ============================================================================
 output "connection_guide" {
   description = "접속 가이드"
+  sensitive   = true
   value       = <<-EOT
 
   ============================================
