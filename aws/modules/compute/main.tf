@@ -208,6 +208,9 @@ resource "helm_release" "kube_prometheus_stack" {
   version          = var.prometheus_stack_version
   namespace        = "petclinic"
   create_namespace = true
+  timeout          = 900  # 15분 (kube-prometheus-stack은 무거움)
+  wait             = true
+  wait_for_jobs    = true
 
   values = [
     <<-EOT
