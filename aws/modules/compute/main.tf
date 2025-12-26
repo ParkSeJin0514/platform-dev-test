@@ -199,6 +199,64 @@ provider "helm" {
 }
 
 # ============================================================================
+# EBS CSI Driver EKS Addon
+# ============================================================================
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name             = module.eks.cluster_id
+  addon_name               = "aws-ebs-csi-driver"
+  addon_version            = var.ebs_csi_driver_version
+  service_account_role_arn = module.ebs_csi_irsa.iam_role_arn
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  tags = {
+    Project     = var.project_name
+    Environment = "production"
+    ManagedBy   = "terragrunt"
+  }
+
+  depends_on = [module.eks]
+}
+
+# ============================================================================
+# gp3 StorageClass (default)
+# ============================================================================
+resource "kubernetes_storage_class" "gp3" {
+  metadata {
+    name = "gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+
+  storage_provisioner = "ebs.csi.aws.com"
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "WaitForFirstConsumer"
+  allow_volume_expansion = true
+
+  parameters = {
+    type   = "gp3"
+    fsType = "ext4"
+  }
+
+  depends_on = [aws_eks_addon.ebs_csi]
+}
+
+# gp2 StorageClass의 default 해제
+resource "kubernetes_annotations" "gp2_non_default" {
+  api_version = "storage.k8s.io/v1"
+  kind        = "StorageClass"
+  metadata {
+    name = "gp2"
+  }
+  annotations = {
+    "storageclass.kubernetes.io/is-default-class" = "false"
+  }
+
+  depends_on = [kubernetes_storage_class.gp3]
+}
+
+# ============================================================================
 # kube-prometheus-stack Helm Chart (petclinic namespace)
 # ============================================================================
 resource "helm_release" "kube_prometheus_stack" {
@@ -256,7 +314,7 @@ resource "helm_release" "kube_prometheus_stack" {
     EOT
   ]
 
-  depends_on = [module.eks]
+  depends_on = [kubernetes_storage_class.gp3]
 }
 
 # ============================================================================

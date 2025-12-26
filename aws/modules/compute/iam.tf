@@ -49,7 +49,31 @@ module "alb_controller_irsa" {
 }
 
 # ============================================================================
-# 2. EFS CSI Driver IRSA
+# 2. EBS CSI Driver IRSA
+# ============================================================================
+module "ebs_csi_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.48"
+
+  role_name             = "${var.project_name}-ebs-csi-driver"
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = aws_iam_openid_connect_provider.cluster.arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+
+  tags = {
+    Project     = var.project_name
+    Environment = "production"
+    ManagedBy   = "terragrunt"
+  }
+}
+
+# ============================================================================
+# 3. EFS CSI Driver IRSA
 # ============================================================================
 module "efs_csi_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"

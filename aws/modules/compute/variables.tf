@@ -257,6 +257,15 @@ variable "github_oidc_role_arn" {
 }
 
 # ============================================================================
+# EBS CSI Driver 설정
+# ============================================================================
+variable "ebs_csi_driver_version" {
+  description = "EBS CSI Driver addon version"
+  type        = string
+  default     = "v1.37.0-eksbuild.1"
+}
+
+# ============================================================================
 # kube-prometheus-stack 설정
 # ============================================================================
 variable "prometheus_stack_version" {

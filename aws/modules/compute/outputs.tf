@@ -82,6 +82,11 @@ output "alb_controller_role_arn" {
   value       = module.alb_controller_irsa.iam_role_arn
 }
 
+output "ebs_csi_driver_role_arn" {
+  description = "EBS CSI Driver IRSA Role ARN"
+  value       = module.ebs_csi_irsa.iam_role_arn
+}
+
 output "efs_csi_driver_role_arn" {
   description = "EFS CSI Driver IRSA Role ARN"
   value       = module.efs_csi_irsa.iam_role_arn
