@@ -11,6 +11,7 @@ AWS Primary + GCP DR 환경을 위한 Terraform/Terragrunt IaC 코드
 │  VPC (10.0.0.0/16)              │  VPC (172.16.0.0/16)              │
 │  EKS + Managed Node Group       │  GKE Standard + Node Pool         │
 │  Karpenter (Auto Scaling)       │  Node Pool Autoscaling            │
+│  EBS CSI Driver + gp3           │  GCE PD CSI (built-in)            │
 │  ALB Controller                 │  GKE Ingress (GCE)                │
 │  External Secrets (AWS SM)      │  External Secrets (GCP SM)        │
 │  IRSA                           │  Workload Identity                │
@@ -137,7 +138,7 @@ ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
 | Layer | AWS | GCP |
 |-------|-----|-----|
 | **Foundation** | VPC, Subnet, Regional NAT Gateway | VPC, Subnet, Cloud NAT |
-| **Compute** | EKS, RDS, IAM Roles | GKE Standard, Cloud SQL, VMs |
+| **Compute** | EKS, RDS, EBS CSI Driver, IAM Roles | GKE Standard, Cloud SQL, VMs |
 | **Bootstrap** | ArgoCD | ArgoCD |
 
 ## AWS vs GCP 주요 차이점
@@ -147,6 +148,7 @@ ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
 | Kubernetes | EKS + Managed Node | GKE Standard + Node Pool |
 | Auto Scaling | Karpenter | Node Pool Autoscaling |
 | Load Balancer | ALB Controller | GKE Ingress |
+| Storage | EBS CSI Driver + gp3 | GCE PD CSI (built-in) |
 | IAM | IRSA | Workload Identity |
 | Database | RDS MySQL | Cloud SQL MySQL |
 | State Backend | S3 | GCS |
@@ -278,6 +280,18 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 - **원인**: RDS SG에 Cluster SG 미등록 (Karpenter 노드는 Cluster SG 사용)
 - **해결**: `cluster_security_group_id`를 RDS 허용 SG에 추가
 
+### PVC Pending 상태 (unbound immediate PersistentVolumeClaims)
+- **원인**: EBS CSI Driver 미설치 또는 StorageClass 미설정
+- **증상**: Prometheus, Grafana, Alertmanager Pod가 Pending 상태
+- **해결**: EBS CSI Driver가 자동 설치되므로 compute 레이어 재배포
+
+```bash
+# 확인 명령어
+kubectl get pods -n kube-system | grep ebs     # EBS CSI Driver Pod 확인
+kubectl get storageclass                        # gp3가 default인지 확인
+kubectl get pvc -n petclinic                    # PVC 상태 확인
+```
+
 ### Terraform State와 AWS 리소스 불일치 (EntityAlreadyExists)
 GitHub Actions에서 `EntityAlreadyExists` 오류 발생 시 AWS에 리소스가 존재하지만 Terraform State에 없는 상태.
 
@@ -373,6 +387,12 @@ kube-prometheus-stack은 **Terraform compute 레이어에서 Helm으로 자동 �
 ### 설정 변수 (compute 모듈)
 
 ```hcl
+# EBS CSI Driver (AWS Only)
+variable "ebs_csi_driver_version" {
+  default = "v1.37.0-eksbuild.1"
+}
+
+# kube-prometheus-stack
 variable "prometheus_stack_version" {
   default = "65.1.0"
 }
@@ -389,6 +409,23 @@ variable "prometheus_storage_size" {
 variable "grafana_storage_size" {
   default = "5Gi"
 }
+```
+
+### AWS EBS CSI Driver
+
+Kubernetes 1.23+ 에서는 EBS 볼륨 프로비저닝을 위해 EBS CSI Driver가 필수입니다.
+
+**자동 설치 항목:**
+- EBS CSI Driver EKS Addon
+- IRSA Role (`ebs-csi-controller-sa`)
+- gp3 StorageClass (default)
+
+```bash
+# StorageClass 확인
+kubectl get storageclass
+# NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+# gp2             kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  1h
+# gp3 (default)   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   1h
 ```
 
 ### Ingress 관리
