@@ -20,53 +20,31 @@ output "argocd_server_url" {
 
 output "argocd_access_guide" {
   description = "ArgoCD 접속 가이드"
-  sensitive   = true
   value       = <<-EOT
 
   ============================================
-  🔄 ArgoCD 접속 가이드
+  ArgoCD 접속 가이드
   ============================================
 
-  1️⃣  Port Forward 실행
-      kubectl port-forward svc/argocd-server -n ${var.argocd_namespace} 8080:443
+  1. Port Forward 실행
+     kubectl port-forward svc/argocd-server -n ${var.argocd_namespace} 8080:443
 
-  2️⃣  브라우저 접속
-      https://localhost:8080
+  2. 브라우저 접속
+     https://localhost:8080
 
-  3️⃣  로그인 정보
-      Username: admin
-      Password: (아래 명령어로 확인)
-      
-      kubectl -n ${var.argocd_namespace} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+  3. 로그인 정보
+     Username: admin
+     Password: (아래 명령어로 확인)
+
+     kubectl -n ${var.argocd_namespace} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 
   ============================================
-  📋 IRSA Role ARNs (platform-gitops에 설정)
+  IRSA Role ARNs (platform-gitops에 설정)
   ============================================
 
   ALB Controller:     ${var.alb_controller_role_arn}
   EFS CSI Driver:     ${var.efs_csi_driver_role_arn}
   External Secrets:   ${var.external_secrets_role_arn}
 
-  ============================================
-  📋 Cluster Monitoring (kube-prometheus-stack)
-  ============================================
-
-  Namespace:          petclinic
-  Grafana:            admin / ${var.grafana_admin_password}
-
   EOT
-}
-
-# ============================================================================
-# kube-prometheus-stack 정보
-# ============================================================================
-output "prometheus_stack_namespace" {
-  description = "kube-prometheus-stack namespace"
-  value       = "petclinic"
-}
-
-output "grafana_admin_password" {
-  description = "Grafana admin password"
-  value       = var.grafana_admin_password
-  sensitive   = true
 }

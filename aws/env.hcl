@@ -111,12 +111,4 @@ locals {
   argocd_namespace        = "argocd"
   gitops_repo_url = "https://github.com/ParkSeJin0514/platform-gitops-last.git"
   gitops_target_revision  = "main"
-
-  # =========================================================================
-  # kube-prometheus-stack 설정 (Bootstrap)
-  # =========================================================================
-  prometheus_stack_version = "58.2.2"
-  prometheus_storage_size  = "20Gi"
-  grafana_admin_password   = get_env("TF_VAR_grafana_admin_password", "admin123!")
-  grafana_storage_size     = "5Gi"
 }

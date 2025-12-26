@@ -112,10 +112,4 @@ inputs = {
   argocd_namespace       = local.env.locals.argocd_namespace
   gitops_repo_url        = local.env.locals.gitops_repo_url
   gitops_target_revision = local.env.locals.gitops_target_revision
-
-  # kube-prometheus-stack 설정
-  prometheus_stack_version = local.env.locals.prometheus_stack_version
-  prometheus_storage_size  = local.env.locals.prometheus_storage_size
-  grafana_admin_password   = local.env.locals.grafana_admin_password
-  grafana_storage_size     = local.env.locals.grafana_storage_size
 }
