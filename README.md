@@ -138,8 +138,9 @@ ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
 | Layer | AWS | GCP |
 |-------|-----|-----|
 | **Foundation** | VPC, Subnet, Regional NAT Gateway | VPC, Subnet, Cloud NAT |
-| **Compute** | EKS, RDS, EBS CSI Driver, IAM Roles | GKE Standard, Cloud SQL, VMs |
-| **Bootstrap** | ArgoCD | ArgoCD |
+| **Compute** | EKS, RDS, EBS CSI Driver, IAM Roles | GKE Standard, Cloud SQL, VMs, kube-prometheus-stack |
+| **Bootstrap** | StorageClass (gp3), ArgoCD | ArgoCD |
+| **ArgoCD 관리** | kube-prometheus-stack | - |
 
 ## ⚖️ AWS vs GCP 주요 차이점
 
@@ -152,6 +153,7 @@ ssh_public_key = file("${get_repo_root()}/aws/keys/test.pub")
 | IAM | IRSA | Workload Identity |
 | Database | RDS MySQL | Cloud SQL MySQL |
 | State Backend | S3 | GCS |
+| Monitoring | ArgoCD에서 관리 | Terraform (Compute)에서 관리 |
 
 ## 🌍 Regional NAT Gateway (AWS)
 
@@ -204,9 +206,13 @@ Karpenter Controller 중지 → NodePool 삭제 → EC2 종료 → ArgoCD Applic
 ### ☁️ GCP
 
 ```
-ArgoCD Applications 정리 → Ingress 삭제 → LB 리소스 삭제 (역순)
+ArgoCD Applications 정리 → kube-prometheus-stack 삭제 → Ingress 삭제 → LB 리소스 삭제 (역순)
 → NEG 삭제 → Firewall 삭제 → Cloud SQL 삭제 → VPC Peering 삭제 → Terraform Destroy
 ```
+
+**Terraform 리소스 배치:**
+- **Compute**: GKE, Cloud SQL, VMs, kube-prometheus-stack
+- **Bootstrap**: ArgoCD
 
 #### 🔧 NEG 자동 정리 (Terragrunt before_hook)
 
