@@ -681,10 +681,11 @@ jobs:
 
       - name: Cleanup GKE Ingress Resources (LB Stack → Backend → NEG)
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
-          echo "🧹 GKE Ingress 리소스 정리 시작 (병렬 처리)..."
+          echo "🧹 GKE Ingress 리소스 정리 시작 (병렬 처리, 최대 10분)..."
           echo "   삭제 순서: Forwarding Rules → Target Proxies → URL Maps → Backend Services → Health Checks → NEG → Firewall"
+          echo "   완료 시 즉시 다음 단계로 진행"
 
           # ============================================================
           # 1-5단계: LB 리소스 삭제 (병렬)
@@ -712,19 +713,36 @@ jobs:
             xargs -P 10 -I {} gcloud compute health-checks delete "{}" --global --quiet 2>/dev/null || true
 
           # ============================================================
-          # 6단계: NEG 삭제 (zone별 병렬)
+          # 6단계: NEG 삭제 (완료 기반 대기, 최대 5분)
           # ============================================================
-          echo "  6️⃣ NEG 삭제 (병렬)..."
-          for zone in asia-northeast3-a asia-northeast3-b asia-northeast3-c; do
-            (
-              gcloud compute network-endpoint-groups list \
-                --filter="zone:$zone AND (name~k8s1 OR name~k8s2 OR name~petclinic)" \
-                --format="value(name)" 2>/dev/null | \
-                xargs -P 10 -I {} gcloud compute network-endpoint-groups delete "{}" --zone="$zone" --quiet 2>/dev/null || true
-            ) &
+          echo "  6️⃣ NEG 삭제 (병렬, 완료 시 즉시 진행)..."
+
+          for attempt in {1..30}; do  # 30 x 10s = 5분 최대
+            # 현재 NEG 목록 확인
+            NEG_COUNT=$(gcloud compute network-endpoint-groups list \
+              --filter="name~k8s1 OR name~k8s2 OR name~petclinic" \
+              --format="value(name)" 2>/dev/null | wc -l)
+
+            if [ "$NEG_COUNT" -eq 0 ]; then
+              echo "    ✅ 모든 NEG 삭제 완료!"
+              break
+            fi
+
+            echo "    남은 NEG: $NEG_COUNT개 (시도 $attempt/30)"
+
+            # zone별 병렬 삭제 시도
+            for zone in asia-northeast3-a asia-northeast3-b asia-northeast3-c; do
+              (
+                gcloud compute network-endpoint-groups list \
+                  --filter="zone:$zone AND (name~k8s1 OR name~k8s2 OR name~petclinic)" \
+                  --format="value(name)" 2>/dev/null | \
+                  xargs -P 10 -I {} gcloud compute network-endpoint-groups delete "{}" --zone="$zone" --quiet 2>/dev/null || true
+              ) &
+            done
+            wait
+
+            sleep 10
           done
-          wait
-          echo "    NEG 삭제 완료"
 
           # ============================================================
           # 7단계: 방화벽 삭제 (병렬)
@@ -772,30 +790,46 @@ jobs:
 
       - name: Final Cleanup - NEG and Firewall (Before VPC deletion)
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
-          echo "🧹 VPC 삭제 전 NEG 및 방화벽 규칙 최종 정리 (병렬)..."
+          echo "🧹 VPC 삭제 전 NEG 및 방화벽 규칙 최종 정리 (완료 시 즉시 진행)..."
 
           # ============================================================
-          # NEG 최종 정리 (zone별 병렬)
+          # NEG 최종 정리 (완료 기반 대기, 최대 3분)
           # ============================================================
-          echo "  1️⃣ 남은 NEG 최종 삭제 (병렬)..."
-          for zone in asia-northeast3-a asia-northeast3-b asia-northeast3-c; do
-            (
-              gcloud compute network-endpoint-groups list \
-                --filter="zone:$zone AND (name~k8s1 OR name~k8s2 OR name~petclinic)" \
-                --format="value(name)" 2>/dev/null | \
-                xargs -P 10 -I {} gcloud compute network-endpoint-groups delete "{}" --zone="$zone" --quiet 2>/dev/null || true
-            ) &
+          echo "  1️⃣ 남은 NEG 최종 삭제..."
+
+          for attempt in {1..18}; do  # 18 x 10s = 3분 최대
+            # 현재 NEG 목록 확인
+            NEG_COUNT=$(gcloud compute network-endpoint-groups list \
+              --filter="name~k8s1 OR name~k8s2 OR name~petclinic" \
+              --format="value(name)" 2>/dev/null | wc -l)
+
+            if [ "$NEG_COUNT" -eq 0 ]; then
+              echo "    ✅ 모든 NEG 삭제 완료!"
+              break
+            fi
+
+            echo "    남은 NEG: $NEG_COUNT개 (시도 $attempt/18)"
+
+            # zone별 병렬 삭제 시도
+            for zone in asia-northeast3-a asia-northeast3-b asia-northeast3-c; do
+              (
+                gcloud compute network-endpoint-groups list \
+                  --filter="zone:$zone AND (name~k8s1 OR name~k8s2 OR name~petclinic)" \
+                  --format="value(name)" 2>/dev/null | \
+                  xargs -P 10 -I {} gcloud compute network-endpoint-groups delete "{}" --zone="$zone" --quiet 2>/dev/null || true
+              ) &
+            done
+            wait
+
+            sleep 10
           done
-          wait
 
-          # 남은 NEG 확인
+          # 최종 상태 확인
           REMAINING=$(gcloud compute network-endpoint-groups list --filter="name~k8s1 OR name~k8s2 OR name~petclinic" --format="value(name)" 2>/dev/null | wc -l)
-          if [ "$REMAINING" -eq 0 ]; then
-            echo "  ✅ 모든 NEG 삭제 완료"
-          else
-            echo "  ⚠️ 남은 NEG: $REMAINING (Terraform에서 처리)"
+          if [ "$REMAINING" -gt 0 ]; then
+            echo "  ⚠️ 남은 NEG: $REMAINING개 (Terraform에서 처리)"
           fi
 
           # ============================================================
