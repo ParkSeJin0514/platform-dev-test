@@ -20,6 +20,7 @@ output "argocd_server_url" {
 
 output "argocd_access_guide" {
   description = "ArgoCD 접속 가이드"
+  sensitive   = true
   value       = <<-EOT
 
   ============================================
@@ -46,5 +47,26 @@ output "argocd_access_guide" {
   EFS CSI Driver:     ${var.efs_csi_driver_role_arn}
   External Secrets:   ${var.external_secrets_role_arn}
 
+  ============================================
+  Cluster Monitoring (kube-prometheus-stack)
+  ============================================
+
+  Namespace:          petclinic
+  Grafana:            admin / ${var.grafana_admin_password}
+
   EOT
+}
+
+# ============================================================================
+# kube-prometheus-stack 정보
+# ============================================================================
+output "prometheus_stack_namespace" {
+  description = "kube-prometheus-stack namespace"
+  value       = "petclinic"
+}
+
+output "grafana_admin_password" {
+  description = "Grafana admin password"
+  value       = var.grafana_admin_password
+  sensitive   = true
 }

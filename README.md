@@ -40,7 +40,7 @@ platform-dev-last/
 │       ├── db/                  # RDS MySQL, Parameter Group, SG
 │       ├── foundation/          # Foundation 통합 모듈
 │       ├── compute/             # Compute 통합 모듈 (EKS, RDS, Karpenter IRSA)
-│       └── bootstrap/           # ArgoCD, aws-auth ConfigMap
+│       └── bootstrap/           # StorageClass, kube-prometheus-stack, ArgoCD
 │
 ├── gcp/                          # GCP Infrastructure
 │   ├── terragrunt.hcl           # Root Terragrunt (GCS Backend)
@@ -192,13 +192,13 @@ Repository → Settings → Environments → `production` 생성 → Required re
 
 ```
 Karpenter Controller 중지 → NodePool 삭제 → EC2 종료 → ArgoCD Applications 정리
-→ Ingress/LB Service 삭제 → ALB 강제 삭제 → Target Group 삭제
-→ Terraform Destroy (Bootstrap → Compute → SG 삭제 → Foundation)
+→ StorageClass/Helm/Add-ons 삭제 → Ingress/LB Service 삭제 → ALB 강제 삭제
+→ Target Group 삭제 → Terraform Destroy (Bootstrap → Compute → SG 삭제 → Foundation)
 ```
 
 **Terraform 리소스 배치:**
 - **Compute**: EKS, RDS, EC2, EBS CSI Add-on
-- **Bootstrap**: ArgoCD, aws-auth ConfigMap
+- **Bootstrap**: StorageClass (gp3), kube-prometheus-stack (Alertmanager 비활성화), ArgoCD
 
 ### ☁️ GCP
 
@@ -288,7 +288,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 
 ### ❌ PVC Pending 상태 (unbound immediate PersistentVolumeClaims)
 - **원인**: EBS CSI Driver 미설치 또는 StorageClass 미설정
-- **증상**: Prometheus, Grafana, Alertmanager Pod가 Pending 상태
+- **증상**: Prometheus, Grafana Pod가 Pending 상태
 - **해결**: EBS CSI Driver가 자동 설치되므로 compute 레이어 재배포
 
 ```bash

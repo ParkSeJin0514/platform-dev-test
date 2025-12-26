@@ -1,8 +1,105 @@
 # ============================================================================
 # Bootstrap Module - main.tf
 # ============================================================================
-# EKS 클러스터 설정: ArgoCD
+# EKS 클러스터 설정: StorageClass, kube-prometheus-stack, ArgoCD
 # ============================================================================
+
+# ============================================================================
+# gp3 StorageClass (default)
+# ============================================================================
+resource "kubernetes_storage_class" "gp3" {
+  metadata {
+    name = "gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+
+  storage_provisioner    = "ebs.csi.aws.com"
+  reclaim_policy         = "Delete"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  allow_volume_expansion = true
+
+  parameters = {
+    type   = "gp3"
+    fsType = "ext4"
+  }
+}
+
+# gp2 StorageClass의 default 해제
+resource "kubernetes_annotations" "gp2_non_default" {
+  api_version = "storage.k8s.io/v1"
+  kind        = "StorageClass"
+  metadata {
+    name = "gp2"
+  }
+  annotations = {
+    "storageclass.kubernetes.io/is-default-class" = "false"
+  }
+
+  depends_on = [kubernetes_storage_class.gp3]
+}
+
+# ============================================================================
+# kube-prometheus-stack Helm Chart (petclinic namespace)
+# Alertmanager 비활성화
+# ============================================================================
+resource "helm_release" "kube_prometheus_stack" {
+  name             = "kube-prometheus-stack"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  version          = var.prometheus_stack_version
+  namespace        = "petclinic"
+  create_namespace = true
+  timeout          = 900
+  wait             = true
+  wait_for_jobs    = true
+
+  values = [
+    <<-EOT
+    prometheus:
+      prometheusSpec:
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        retention: 7d
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: gp3
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: ${var.prometheus_storage_size}
+
+    grafana:
+      enabled: true
+      adminPassword: ${var.grafana_admin_password}
+      persistence:
+        enabled: true
+        type: pvc
+        storageClassName: gp3
+        size: ${var.grafana_storage_size}
+        accessModes:
+          - ReadWriteOnce
+      sidecar:
+        datasources:
+          enabled: true
+        dashboards:
+          enabled: true
+
+    # Alertmanager 비활성화
+    alertmanager:
+      enabled: false
+
+    nodeExporter:
+      enabled: true
+    kubeStateMetrics:
+      enabled: true
+    EOT
+  ]
+
+  depends_on = [kubernetes_storage_class.gp3]
+}
 
 # ============================================================================
 # AWS Auth ConfigMap
