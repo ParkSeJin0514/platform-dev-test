@@ -199,6 +199,27 @@ ArgoCD Applications 정리 → Ingress 삭제 → LB 리소스 삭제 (역순)
 → NEG 삭제 → Firewall 삭제 → Cloud SQL 삭제 → VPC Peering 삭제 → Terraform Destroy
 ```
 
+#### NEG 자동 정리 (Terragrunt before_hook)
+
+GCP compute 레이어 destroy 시 NEG가 Load Balancer 백엔드 서비스에 연결되어 있으면 삭제가 실패합니다.
+이를 해결하기 위해 `before_hook`으로 NEG를 자동 정리합니다.
+
+```hcl
+# gcp/compute/terragrunt.hcl
+terraform {
+  before_hook "cleanup_neg_before_destroy" {
+    commands = ["destroy"]
+    execute  = ["bash", "${get_terragrunt_dir()}/scripts/cleanup-neg.sh", local.env.locals.project_id]
+  }
+}
+```
+
+**cleanup-neg.sh 동작:**
+1. 백엔드 서비스(`petclinic-gke-backend`)에서 NEG 제거
+2. 모든 zone의 petclinic 관련 NEG 삭제
+
+**주의**: NEG는 GKE가 자동 생성하므로 삭제해도 다음 apply 시 Service 배포와 함께 자동 재생성됩니다.
+
 ## GCP 특이사항
 
 ### Management VM 자동 설정

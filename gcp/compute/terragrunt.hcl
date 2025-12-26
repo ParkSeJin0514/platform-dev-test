@@ -13,8 +13,18 @@ locals {
   env = read_terragrunt_config(find_in_parent_folders("env.hcl"))
 }
 
+# ============================================================================
+# Before Destroy Hook - NEG 정리
+# ============================================================================
+# GKE destroy 전에 Load Balancer 백엔드 서비스에서 NEG 제거 후 NEG 삭제
+# ============================================================================
 terraform {
   source = "${get_parent_terragrunt_dir()}/modules//compute"
+
+  before_hook "cleanup_neg_before_destroy" {
+    commands = ["destroy"]
+    execute  = ["bash", "${get_terragrunt_dir()}/scripts/cleanup-neg.sh", local.env.locals.project_id]
+  }
 }
 
 # ============================================================================
