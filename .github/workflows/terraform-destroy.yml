@@ -1043,6 +1043,61 @@ jobs:
       # ============================================================
       # Terraform Destroy 실패 시 남은 리소스 강제 삭제
       # ============================================================
+      - name: Force Delete Karpenter EC2 Instances
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "🧹 Karpenter EC2 인스턴스 강제 종료..."
+
+          # ============================================================
+          # Karpenter 노드 검색 (여러 패턴으로 검색)
+          # ============================================================
+
+          # 1. karpenter.sh/nodepool 태그로 검색
+          KARPENTER_BY_TAG=$(aws ec2 describe-instances \
+            --filters "Name=tag-key,Values=karpenter.sh/nodepool" "Name=instance-state-name,Values=running,pending,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+
+          # 2. 이름 패턴으로 검색 (karpenter 포함)
+          KARPENTER_BY_NAME=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*karpenter*" "Name=instance-state-name,Values=running,pending,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+
+          # 3. eks-karpenter-node 패턴으로 검색
+          KARPENTER_BY_EKS_NAME=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*eks*karpenter*" "Name=instance-state-name,Values=running,pending,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+
+          # 4. karpenter.sh/discovery 태그로 검색
+          KARPENTER_BY_DISCOVERY=$(aws ec2 describe-instances \
+            --filters "Name=tag-key,Values=karpenter.sh/discovery" "Name=instance-state-name,Values=running,pending,stopping" \
+            --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null || true)
+
+          # 모든 결과 합치기 (중복 제거)
+          ALL_KARPENTER=$(echo "$KARPENTER_BY_TAG $KARPENTER_BY_NAME $KARPENTER_BY_EKS_NAME $KARPENTER_BY_DISCOVERY" | tr ' ' '\n' | sort -u | grep -v '^$' | tr '\n' ' ' | xargs)
+
+          if [ -n "$ALL_KARPENTER" ]; then
+            echo "  발견된 Karpenter 인스턴스: $ALL_KARPENTER"
+            aws ec2 terminate-instances --instance-ids $ALL_KARPENTER 2>/dev/null || true
+
+            # 종료 대기 (최대 2분)
+            echo "  인스턴스 종료 대기..."
+            for i in {1..12}; do
+              REMAINING=$(aws ec2 describe-instances \
+                --instance-ids $ALL_KARPENTER \
+                --query 'Reservations[*].Instances[?State.Name!=`terminated`].InstanceId' \
+                --output text 2>/dev/null || true)
+              if [ -z "$REMAINING" ]; then
+                echo "  ✅ 모든 Karpenter 인스턴스 종료 완료"
+                break
+              fi
+              echo "    대기 중... ($i/12) - 남은 인스턴스: $REMAINING"
+              sleep 10
+            done
+          else
+            echo "  삭제할 Karpenter 인스턴스 없음"
+          fi
+
       - name: Force Delete Remaining EKS Clusters
         continue-on-error: true
         timeout-minutes: 15
