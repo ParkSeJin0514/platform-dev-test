@@ -40,7 +40,7 @@ platform-dev-last/
 │       ├── db/                  # RDS MySQL, Parameter Group, SG
 │       ├── foundation/          # Foundation 통합 모듈
 │       ├── compute/             # Compute 통합 모듈 (EKS, RDS, Karpenter IRSA)
-│       └── bootstrap/           # StorageClass, kube-prometheus-stack, ArgoCD
+│       └── bootstrap/           # ArgoCD, aws-auth ConfigMap
 │
 ├── gcp/                          # GCP Infrastructure
 │   ├── terragrunt.hcl           # Root Terragrunt (GCS Backend)
@@ -192,13 +192,13 @@ Repository → Settings → Environments → `production` 생성 → Required re
 
 ```
 Karpenter Controller 중지 → NodePool 삭제 → EC2 종료 → ArgoCD Applications 정리
-→ StorageClass/Helm/Add-ons 삭제 → Ingress/LB Service 삭제 → ALB 강제 삭제
-→ Target Group 삭제 → Terraform Destroy (Bootstrap → Compute → SG 삭제 → Foundation)
+→ Ingress/LB Service 삭제 → ALB 강제 삭제 → Target Group 삭제
+→ Terraform Destroy (Bootstrap → Compute → SG 삭제 → Foundation)
 ```
 
 **Terraform 리소스 배치:**
 - **Compute**: EKS, RDS, EC2, EBS CSI Add-on
-- **Bootstrap**: StorageClass (gp3), kube-prometheus-stack, ArgoCD
+- **Bootstrap**: ArgoCD, aws-auth ConfigMap
 
 ### ☁️ GCP
 
@@ -375,85 +375,6 @@ aws s3 ls s3://petclinic-kr-tfstate/ --recursive
 # DynamoDB Lock 항목 확인/삭제
 aws dynamodb scan --table-name petclinic-kr-tflock
 aws dynamodb delete-item --table-name petclinic-kr-tflock --key '{"LockID":{"S":"petclinic-kr-tfstate/compute/terraform.tfstate"}}'
-```
-
-## 📈 Monitoring (kube-prometheus-stack)
-
-kube-prometheus-stack은 **Terraform compute 레이어에서 Helm으로 자동 설치**됩니다.
-
-### ⚙️ 자동 설치 구성
-
-| 항목 | AWS | GCP |
-|------|-----|-----|
-| Namespace | `petclinic` | `petclinic` |
-| Grafana Service | ClusterIP | NodePort |
-| Prometheus Service | ClusterIP | NodePort |
-| Ingress Class | ALB | GCE |
-
-### 📝 설정 변수 (compute 모듈)
-
-```hcl
-# EBS CSI Driver (AWS Only)
-variable "ebs_csi_driver_version" {
-  default = "v1.37.0-eksbuild.1"
-}
-
-# kube-prometheus-stack
-variable "prometheus_stack_version" {
-  default = "65.1.0"
-}
-
-variable "grafana_admin_password" {
-  default   = "admin"
-  sensitive = true
-}
-
-variable "prometheus_storage_size" {
-  default = "10Gi"
-}
-
-variable "grafana_storage_size" {
-  default = "5Gi"
-}
-```
-
-### 💾 AWS EBS CSI Driver
-
-Kubernetes 1.23+ 에서는 EBS 볼륨 프로비저닝을 위해 EBS CSI Driver가 필수입니다.
-
-**자동 설치 항목:**
-- EBS CSI Driver EKS Addon
-- IRSA Role (`ebs-csi-controller-sa`)
-- gp3 StorageClass (default)
-
-```bash
-# StorageClass 확인
-kubectl get storageclass
-# NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
-# gp2             kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  1h
-# gp3 (default)   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   1h
-```
-
-### 🌐 Ingress 관리
-
-Ingress는 **petclinic-gitops에서 통합 관리**됩니다:
-
-- **AWS**: `overlays/aws/cluster-monitoring-ingress.yaml` (ALB)
-- **GCP**: `overlays/gcp/cluster-monitoring-ingress.yaml` (GCE)
-
-> Terraform은 Helm Chart만 설치하고, Ingress는 GitOps로 관리하여 모든 Ingress를 한 곳에서 관리합니다.
-
-### 🔌 GCP NodePort 요구사항
-
-GCE Ingress는 NodePort 서비스가 필요합니다. Terraform이 Helm values에서 자동으로 NodePort로 설정합니다:
-
-```yaml
-grafana:
-  service:
-    type: NodePort
-prometheus:
-  service:
-    type: NodePort
 ```
 
 ## 🔗 관련 저장소
