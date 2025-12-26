@@ -178,8 +178,10 @@ AWS Provider 6.24.0부터 지원. 단일 NAT Gateway로 모든 AZ 커버.
 1. `destroy` 입력 확인
 2. Slack 승인 요청 알림
 3. GitHub Environment 승인 대기
-4. Pre-Cleanup + Terraform Destroy
-5. 완료 알림
+4. Pre-Cleanup (K8s 리소스 정리)
+5. Terraform Destroy (Bootstrap → Compute → Foundation)
+6. Post-Cleanup (보안 그룹 강제 삭제)
+7. 완료 알림
 
 ### 🔒 GitHub Environment 설정
 
