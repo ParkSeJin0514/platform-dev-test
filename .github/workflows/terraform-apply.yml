@@ -46,9 +46,10 @@ env:
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 # 동시에 하나만 실행 (클라우드별로 분리)
-concurrency:
-  group: terraform-apply-${{ github.event.inputs.cloud }}
-  cancel-in-progress: false
+# ⚠️ DynamoDB Lock 테스트를 위해 주석 처리
+# concurrency:
+#   group: terraform-apply-${{ github.event.inputs.cloud }}
+#   cancel-in-progress: false
 
 jobs:
   # ============================================
